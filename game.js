@@ -135,12 +135,15 @@ function levelConfig(L) {
   if (cycle > 0 && theme !== 'train') garages = 2;
   const garageSize = 2 + Math.min(3, Math.floor(L / 8));
   const asteroids = space ? Math.min(5, 2 + Math.floor(stage / 2) + cycle) : 0;
+  const blackHole = space && (stage === 4 || (cycle > 0 && stage >= 2));
   const capW = L <= 3 ? { 4: 0.55, 6: 0.45, 10: 0 } : L <= 10 ? { 4: 0.35, 6: 0.45, 10: 0.2 } : { 4: 0.25, 6: 0.42, 10: 0.33 };
   const pods = clamp(24 - Math.floor(L / 2), 12, 24); // holding-circle size: fewer people = less choice
   // later Rail Yard levels criss-cross the tracks so it's hard to see what blocks what
-  const spaghetti = theme === 'train' && (stage >= 2 || cycle > 0) ? Math.min(10, 4 + stage + cycle * 2) : 0;
+  // the hardest rail levels: squiggly curved tracks
+  const curvy = theme === 'train' && ((cycle === 0 && stage === 4) || (cycle > 0 && stage >= 2)) ? Math.min(7, 5 + cycle) : 0;
+  const spaghetti = theme === 'train' && !curvy && (stage >= 2 || cycle > 0) ? Math.min(10, 4 + stage + cycle * 2) : 0;
   return {
-    L, theme, cycle, stage, party, n, colors, open, stick, pods, bays, garages, garageSize, asteroids, spaghetti,
+    L, theme, cycle, stage, party, n, colors, open, stick, pods, bays, garages, garageSize, asteroids, spaghetti, curvy, blackHole,
     diag: L >= 4 && theme !== 'train', mysteryFrac, lockCount, capW, world: wi + 1,
   };
 }
@@ -316,7 +319,165 @@ function simulateExit(lotV, garages, rng) {
   return { order, stuck: [...rem], stuckGarages: gq.map((q, i) => (q.length ? i : -1)).filter((i) => i >= 0) };
 }
 
+/* Curvy tracks: smooth splines between two points on the loop, with cumulative lengths. */
+function catmullRom(ctrl, per) {
+  const P = [ctrl[0]].concat(ctrl, [ctrl[ctrl.length - 1]]);
+  const out = [];
+  for (let i = 1; i < P.length - 2; i++) {
+    const p0 = P[i - 1], p1 = P[i], p2 = P[i + 1], p3 = P[i + 2];
+    for (let k = 0; k < per; k++) {
+      const t = k / per, t2 = t * t, t3 = t2 * t;
+      const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
+    }
+  }
+  out.push(ctrl[ctrl.length - 1].slice());
+  return out;
+}
+function makeTrack(pts) {
+  const S = [0];
+  for (let i = 1; i < pts.length; i++) S.push(S[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  return { pts, S, L: S[S.length - 1] };
+}
+function trackPoint(t, s) {
+  s = clamp(s, 0, t.L);
+  let lo = 0, hi = t.S.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (t.S[mid] <= s) lo = mid; else hi = mid; }
+  const seg = t.S[hi] - t.S[lo] || 1, k = (s - t.S[lo]) / seg;
+  return [t.pts[lo][0] + (t.pts[hi][0] - t.pts[lo][0]) * k, t.pts[lo][1] + (t.pts[hi][1] - t.pts[lo][1]) * k];
+}
+function trackAngle(t, s) {
+  const a = trackPoint(t, s - 2), b = trackPoint(t, s + 2);
+  return Math.atan2(b[1] - a[1], b[0] - a[0]);
+}
+// points a curvy train sweeps through on its way out (from its nose to the end of its track)
+function curvyPathPts(tracks, v) {
+  const t = tracks[v.track], out = [];
+  const sf = v.s + v.dir * v.len / 2, end = v.dir > 0 ? t.L : 0;
+  for (let q = sf + v.dir * 3; v.dir > 0 ? q <= end : q >= end; q += v.dir * 4) out.push(trackPoint(t, q));
+  return out;
+}
+function curvyFoot(tracks, v) {
+  const t = tracks[v.track], out = [];
+  for (let d = -v.len / 2 + 4; d <= v.len / 2 - 4 + 0.01; d += 6) { const q = trackPoint(t, v.s + d); out.push([q[0], q[1], 9]); }
+  return out;
+}
+function pathHits(path, foot) {
+  for (const [px, py] of path) {
+    for (const [qx, qy, r] of foot) {
+      const lim = 7 + r;
+      if (Math.abs(px - qx) < lim && Math.abs(py - qy) < lim && Math.hypot(px - qx, py - qy) < lim) return true;
+    }
+  }
+  return false;
+}
+
+function tryGenerateCurvy(cfg, T, rng) {
+  const capPick = () => {
+    const r = rng(); let acc = 0;
+    for (const k of [4, 6, 10]) { acc += cfg.capW[k] || 0; if (r < acc) return k; }
+    return 6;
+  };
+  const R = RING;
+  const onRing = (sd) => {
+    if (sd === 0) return [R.x + 40 + rng() * (R.w - 80), R.y];
+    if (sd === 1) return [R.x + R.w, R.y + 40 + rng() * (R.h - 80)];
+    if (sd === 2) return [R.x + 40 + rng() * (R.w - 80), R.y + R.h];
+    return [R.x, R.y + 40 + rng() * (R.h - 80)];
+  };
+  const inward = (pt, sd) => (sd === 0 ? [pt[0], pt[1] + 34] : sd === 1 ? [pt[0] - 34, pt[1]] : sd === 2 ? [pt[0], pt[1] - 34] : [pt[0] + 34, pt[1]]);
+  const tracks = [];
+  for (let i = 0; i < cfg.curvy; i++) {
+    const s0 = (rng() * 4) | 0;
+    const s1 = (s0 + 1 + ((rng() * 3) | 0)) % 4;
+    const a = onRing(s0), b = onRing(s1);
+    const mids = [];
+    const k = 2 + ((rng() * 3) | 0);
+    for (let j = 0; j < k; j++) mids.push([LOT.x + 40 + rng() * (LOT.w - 80), LOT.y + 40 + rng() * (LOT.h - 80)]);
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    mids.sort((p1, p2) => ((p1[0] - a[0]) * dx + (p1[1] - a[1]) * dy) - ((p2[0] - a[0]) * dx + (p2[1] - a[1]) * dy));
+    tracks.push(makeTrack(catmullRom([a, inward(a, s0)].concat(mids, [inward(b, s1), b]), 24)));
+  }
+  // trains sit along the tracks, never overlapping each other
+  let trains = [];
+  const inside = (foot) => foot.every(([x, y]) => x >= LOT.x + 10 && x <= LOT.x + LOT.w - 10 && y >= LOT.y + 10 && y <= LOT.y + LOT.h - 10);
+  const clearOf = (foot) => trains.every((o) => o.foot.every((q) => foot.every((f) => Math.hypot(f[0] - q[0], f[1] - q[1]) >= 19)));
+  for (const ti of shuffle(tracks.map((_, i) => i), rng)) {
+    const t = tracks[ti];
+    let cur = 6;
+    for (;;) {
+      const cap = capPick(), len = T.sizes[cap][0];
+      if (cur + len > t.L) break;
+      const v = { curvy: true, track: ti, s: cur + len / 2, dir: 1, len, wid: T.sizes[cap][1], cap };
+      v.foot = curvyFoot(tracks, v);
+      if (inside(v.foot) && clearOf(v.foot)) {
+        v.dir = rng() < (v.s < t.L / 2 ? 0.72 : 0.28) ? -1 : 1;
+        trains.push(v);
+        cur += len + 7 + rng() * 12;
+      } else cur += 5;
+    }
+  }
+  shuffle(trains, rng);
+  trains.length = Math.min(trains.length, cfg.n);
+
+  // who blocks whom; flip or remove trains until every one can eventually get out
+  const rowOf = (v) => { const path = curvyPathPts(tracks, v); return trains.filter((u) => u !== v && pathHits(path, u.foot)); };
+  const rows = new Map(trains.map((v) => [v, rowOf(v)]));
+  const stuckOf = () => {
+    const alive = new Set(trains);
+    let prog = true;
+    while (prog) {
+      prog = false;
+      for (const v of alive) if (rows.get(v).every((u) => !alive.has(u))) { alive.delete(v); prog = true; }
+    }
+    return [...alive];
+  };
+  for (let it = 0; it < 300; it++) {
+    const st = stuckOf();
+    if (!st.length) break;
+    const v = st[(rng() * st.length) | 0];
+    if (!v.flipped) { v.dir = -v.dir; v.flipped = true; rows.set(v, rowOf(v)); }
+    else { trains.splice(trains.indexOf(v), 1); rows.delete(v); }
+  }
+  for (const v of stuckOf()) { trains.splice(trains.indexOf(v), 1); rows.delete(v); }
+  if (trains.length < 4) return null;
+  for (const v of trains) {
+    const t = tracks[v.track];
+    [v.x, v.y] = trackPoint(t, v.s);
+    v.ang = trackAngle(t, v.s) + (v.dir < 0 ? PI : 0);
+  }
+
+  // colours, party train, exit order, locks and mystery, as for other levels
+  if (cfg.party) trains.slice().sort((a, b) => b.cap - a.cap)[0].party = true;
+  const others = trains.filter((v) => !v.party);
+  const cols = [];
+  for (let i = 0; i < others.length; i++) cols.push(i < cfg.colors ? i : (rng() * cfg.colors) | 0);
+  shuffle(cols, rng);
+  others.forEach((v, i) => { v.color = cols[i]; });
+  trains.forEach((v) => { if (v.party) v.color = PARTY; });
+  const order = [];
+  const alive = new Set(trains);
+  while (alive.size) {
+    const free = [...alive].filter((v) => rows.get(v).every((u) => !alive.has(u)));
+    const pv = free[(rng() * free.length) | 0];
+    order.push(pv); alive.delete(pv);
+  }
+  if (cfg.lockCount) {
+    const cand = order.map((v, i) => ({ v, i })).filter((o) => o.i >= cfg.open && !o.v.party);
+    shuffle(cand, rng);
+    cand.slice(0, cfg.lockCount).forEach((o) => { o.v.lock = 1 + ((rng() * Math.min(o.i - cfg.open + 1, 8)) | 0); });
+  }
+  if (cfg.mysteryFrac) {
+    const blocked = trains.filter((v) => !v.party && !v.lock && rows.get(v).length);
+    shuffle(blocked, rng);
+    blocked.slice(0, Math.round(cfg.mysteryFrac * trains.length)).forEach((v) => { v.mystery = true; });
+  }
+  trains.forEach((v) => { delete v.foot; });
+  return { vehicles: trains, garages: [], tracks: null, curvyTracks: tracks, queue: buildQueue(order, cfg.open, cfg.stick, rng) };
+}
+
 function tryGenerate(cfg, T, rng) {
+  if (cfg.curvy) return tryGenerateCurvy(cfg, T, rng);
   const PAD = 3;
   const axis = [0, PI / 2, PI, -PI / 2], diag = [PI / 4, 3 * PI / 4, -PI / 4, -3 * PI / 4];
   const capPick = () => {
@@ -329,6 +490,10 @@ function tryGenerate(cfg, T, rng) {
 
   // 1) garages, each with a reserved exit spot in front of the door
   const garages = [], reserved = [];
+  if (cfg.blackHole) {
+    const hole = { x: LOT.x + LOT.w / 2 + (rng() - 0.5) * 120, y: LOT.y + LOT.h / 2 + (rng() - 0.5) * 140, ang: 0, len: 46, wid: 46, queue: [], hole: true };
+    garages.push(hole); reserved.push(hole);
+  }
   for (let gi = 0; gi < cfg.garages; gi++) {
     for (let t = 0; t < 300; t++) {
       const ang = [0, PI / 2, PI, -PI / 2][(rng() * 4) | 0];
@@ -342,7 +507,7 @@ function tryGenerate(cfg, T, rng) {
       if (reserved.some((r) => overlap(combo, boxOf(r, 6)))) continue;
       const sw = sweepBox(boxOf(spot));
       if (reserved.some((r) => overlap(sw, boxOf(r)))) continue;
-      if (garages.some((o) => overlap(sweepBox(boxOf(o.spot)), combo))) continue;
+      if (garages.some((o) => o.spot && overlap(sweepBox(boxOf(o.spot)), combo))) continue;
       g.spot = spot;
       garages.push(g); reserved.push(g, spot);
       break;
@@ -350,6 +515,7 @@ function tryGenerate(cfg, T, rng) {
   }
   let inGarages = 0;
   garages.forEach((g, gi) => {
+    if (g.hole) return;
     const k = 2 + ((rng() * (cfg.garageSize - 1)) | 0);
     const c = Math.cos(g.ang), s = Math.sin(g.ang);
     for (let i = 0; i < k; i++) {
@@ -655,7 +821,7 @@ function startLevel(n) {
     });
   }
   const garages = gen.garages.map((g, i) => ({
-    x: g.x, y: g.y, ang: g.ang, len: g.len, wid: g.wid, queue: g.queue, wobble: 0, doorT: 0, cool: 0.5 + i * 0.3,
+    x: g.x, y: g.y, ang: g.ang, len: g.len, wid: g.wid, queue: g.queue, wobble: 0, doorT: 0, cool: 0.5 + i * 0.3, hole: !!g.hole,
   }));
   const asteroids = [];
   for (let i = 0; i < cfg.asteroids; i++) {
@@ -669,7 +835,7 @@ function startLevel(n) {
   }
   G = {
     level: n, cfg, T,
-    vehicles: gen.vehicles, garages, asteroids, tracks: gen.tracks, wrecks: [], flash: 0,
+    vehicles: gen.vehicles, garages, asteroids, tracks: gen.tracks, curvyTracks: gen.curvyTracks || null, wrecks: [], flash: 0,
     lines: [[], []], nextLine: 0,
     pods: new Array(cfg.pods).fill(null), rot: 0, refillT: 0,
     walkers: [], parts: [], floats: [],
@@ -681,6 +847,7 @@ function startLevel(n) {
     time: 0, shake: 0, liftMode: false,
     tutorial: n === 1 && !save.seen.tut, hint: null, hintT: 0,
   };
+  if (cfg.theme === 'train') for (const v of G.vehicles) initSpine(v);
   computeLayout();
   // the holding circle starts full; everyone else is split between the two feeder lines in turn
   const everyone = gen.queue.map(newPassenger);
@@ -749,12 +916,28 @@ function showIntros() {
       });
     }
   }
+  if (cfg.curvy && !save.seen.curvy) {
+    save.seen.curvy = 1;
+    pages.push({
+      emoji: '🌀', title: 'Curly Spaghetti!',
+      html: `<p>The toughest rail yard yet: the tracks <b>twist and loop</b> all over the place, and trains follow every curve.</p>
+        <div class="tip">🔍 Trace each line with your finger before you tap. A train on a crossing blocks every line through it!</div>`,
+    });
+  }
   if (cfg.spaghetti && !save.seen.spag) {
     save.seen.spag = 1;
     pages.push({
       emoji: '🍝', title: 'Spaghetti Junction!',
       html: `<p>The tracks criss-cross everywhere now. A train sitting on a <b>crossing</b> blocks the other line too.</p>
         <div class="tip">🔍 Follow each line carefully before you tap. Remember what happens to trains that are tapped when blocked! 💥</div>`,
+    });
+  }
+  if (cfg.blackHole && !save.seen.hole) {
+    save.seen.hole = 1;
+    pages.push({
+      emoji: '🕳️', title: 'Black Hole!',
+      html: `<p>A black hole has opened up in the launch field. <b>Nothing gets past it</b>, so a rocket pointing at it is stuck until it's lifted out.</p>
+        <div class="tip">☄️ Asteroids are still drifting about too. This is the hardest launch field of all!</div>`,
     });
   }
   if (cfg.garages && !save.seen.garage) {
@@ -803,7 +986,12 @@ function obstaclesFor(v, withRocks) {
   const list = G.vehicles.filter((u) => u !== v && (u.state === 'lot' || u.state === 'bump' || u.state === 'emerging'));
   return withRocks ? list.concat(G.garages, G.wrecks, G.asteroids.filter((a) => a.active)) : list.concat(G.garages, G.wrecks);
 }
+function footOf(u) {
+  if (u.spine) { const out = []; for (let d = 4; d <= u.len - 4 + 0.01; d += 6) { const q = spineAt(u, d); out.push([q[0], q[1], 9]); } return out; }
+  return [[u.x, u.y, Math.max(u.len, u.wid) / 2]];
+}
 function getBlockers(v, withRocks = true) {
+  if (v.curvy) { const path = curvyPathPts(G.curvyTracks, v); return obstaclesFor(v, withRocks).filter((u) => pathHits(path, footOf(u))); }
   const sw = sweepBox(homeBox(v));
   return obstaclesFor(v, withRocks).filter((u) => overlap(sw, homeBox(u)));
 }
@@ -828,7 +1016,10 @@ function handleTap(x, y) {
   let hit = null, bd = 1e9;
   for (const v of G.vehicles) {
     if (v.state !== 'lot') continue;
-    if (pointInBox(x, y, boxOf(v, 6))) {
+    const touched = v.spine
+      ? carPoses(v).some((c) => pointInBox(x, y, { cx: c.x, cy: c.y, ang: c.ang, hl: c.seg / 2 + 6, hw: v.wid / 2 + 6 }))
+      : pointInBox(x, y, boxOf(v, 6));
+    if (touched) {
       const d = Math.hypot(x - v.x, y - v.y);
       if (d < bd) { bd = d; hit = v; }
     }
@@ -852,7 +1043,7 @@ function handleTap(x, y) {
       hit.wrong = (hit.wrong || 0) + 1;
       const first = firstHit(hit, blockers);
       if (hit.wrong >= 3 && first.u.cap) { startRunaway(hit, first.u, first.d); return; }
-      startBump(hit, blockers);
+      if (hit.curvy) curvyBump(hit, first.u); else startBump(hit, blockers);
       if (hit.wrong === 2) toast('⚠️ Careful! Tap it again and it will crash!', 1.8);
       return;
     }
@@ -876,7 +1067,7 @@ function freeBay(v) {
 function sendToBay(v, i) {
   G.bays[i] = v;
   v.bay = i; v.state = 'moving'; v.lift = false;
-  v.path = ringPath(v, i); v.pi = 0; v.speed = 150; v.maxSpeed = 540; v.tang = v.ang;
+  v.path = v.spine ? trainRoute(v, i) : ringPath(v, i); v.pi = 0; v.speed = 150; v.maxSpeed = v.spine ? 460 : 540; v.tang = v.ang;
   v.revealed = true;
   if (G.tutorial && G.taps >= 3) { G.tutorial = false; save.seen.tut = 1; persist(); }
   sfx.go(); buzz(8);
@@ -897,6 +1088,13 @@ function liftVehicle(v, i) {
 
 // how far v can roll forward before touching the first thing in its way, and what that is
 function firstHit(v, blockers) {
+  if (v.curvy) {
+    const path = curvyPathPts(G.curvyTracks, v), foots = blockers.map(footOf);
+    for (let k = 0; k < path.length; k++) {
+      for (let j = 0; j < blockers.length; j++) if (pathHits([path[k]], foots[j])) return { u: blockers[j], d: Math.max(0, k * 4 - 2) };
+    }
+    return { u: blockers[0], d: 0 };
+  }
   const c = Math.cos(v.ang), s = Math.sin(v.ang);
   const boxes = blockers.map(homeBox);
   for (let d = 0; d < 1000; d += 2) {
@@ -913,7 +1111,32 @@ function startBump(v, blockers) {
   G.crashes++;
 }
 
+function curvyBump(v, u) {
+  v.wobble = 1; u.wobble = 1;
+  G.crashes++;
+  const f = v.spine[v.spine.length - 1];
+  for (let i = 0; i < 6; i++) {
+    const a = rand(0, TAU), sp = rand(50, 140);
+    G.parts.push({ type: 'star', x: f[0], y: f[1], vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.5, max: 0.5, size: rand(4, 6), color: '#ffe14d', rot: rand(0, TAU), vr: rand(-8, 8) });
+  }
+  G.floats.push({ x: f[0], y: f[1] - 8, text: pick(['Toot!', 'Blocked!', 'Oops!']), life: 0.8, max: 0.8, color: '#ffffff', size: 13 });
+  sfx.honk(); buzz(30);
+}
+
 function startRunaway(v, target, d) {
+  if (v.curvy) {
+    // charge along the curvy track towards the train in the way
+    const t = G.curvyTracks[v.track], sf = v.s + v.dir * v.len / 2;
+    v.path = [];
+    for (let q = 4; q <= d + 0.01; q += 4) v.path.push(trackPoint(t, sf + v.dir * q));
+    if (!v.path.length) v.path.push(trackPoint(t, sf + v.dir * 1));
+    v.pi = 0; v.speed = 60;
+    v.state = 'runaway';
+    v.run = { curvy: true, target };
+    target.wobble = 1;
+    sfx.honk(); buzz(40);
+    return;
+  }
   v.state = 'runaway';
   v.run = { ox: v.x, oy: v.y, d, t: 0, T: Math.max(0.35, Math.sqrt(2 * d / 700)), target };
   target.wobble = 1;
@@ -944,7 +1167,8 @@ function dropPassengers(color, n) {
 }
 
 function explode(v, u) {
-  const cx = v.x + Math.cos(v.ang) * v.len / 2, cy = v.y + Math.sin(v.ang) * v.len / 2;
+  const nose = v.spine ? v.spine[v.spine.length - 1] : [v.x + Math.cos(v.ang) * v.len / 2, v.y + Math.sin(v.ang) * v.len / 2];
+  const cx = nose[0], cy = nose[1];
   v.state = 'gone'; u.state = 'gone';
   // fireball, smoke, sparks and flying bits of train
   for (let i = 0; i < 28; i++) {
@@ -993,6 +1217,89 @@ function onCrash(v, b) {
 }
 
 // Round off each corner of a path with a short curve so vehicles follow the curved track.
+/* A train's spine runs from its back (index 0) to its front, exactly v.len long.
+   The leading end follows the route and the rest of the train trails along the same
+   points, so every carriage stays on the track through curves and junctions. */
+function setStraightSpine(v) {
+  const c = Math.cos(v.ang), s = Math.sin(v.ang), h = v.len / 2;
+  v.spine = [[v.x - c * h, v.y - s * h], [v.x + c * h, v.y + s * h]];
+}
+function initSpine(v) {
+  if (!v.curvy) { setStraightSpine(v); return; }
+  const t = G.curvyTracks[v.track], pts = [];
+  for (let d = -v.len / 2; d <= v.len / 2 + 0.01; d += 3) pts.push(trackPoint(t, v.s + v.dir * d));
+  v.spine = pts;
+}
+function spineAt(v, d) {
+  const pts = v.spine;
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (acc + seg >= d && seg > 0) { const k = (d - acc) / seg; return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k]; }
+    acc += seg;
+  }
+  return pts[pts.length - 1].slice();
+}
+function trimSpine(v, rev) {
+  const pts = rev ? v.spine.slice().reverse() : v.spine; // walk from the leading end
+  let acc = 0;
+  for (let i = pts.length - 1; i > 0; i--) {
+    const seg = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    if (acc + seg >= v.len) {
+      const k = (v.len - acc) / (seg || 1);
+      const cut = [pts[i][0] + (pts[i - 1][0] - pts[i][0]) * k, pts[i][1] + (pts[i - 1][1] - pts[i][1]) * k];
+      const kept = [cut].concat(pts.slice(i));
+      v.spine = rev ? kept.reverse() : kept;
+      return;
+    }
+    acc += seg;
+  }
+}
+function syncSpine(v) {
+  const c = spineAt(v, v.len / 2), a = spineAt(v, v.len / 2 - 6), b = spineAt(v, v.len / 2 + 6);
+  v.x = c[0]; v.y = c[1];
+  v.ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+}
+// move a train's leading end along v.path (tail first on points flagged as reversing)
+function trainAdvance(v, dt) {
+  let d = v.speed * dt;
+  while (d > 0 && v.pi < v.path.length) {
+    const p = v.path[v.pi], rev = !!p[2];
+    const lead = rev ? v.spine[0] : v.spine[v.spine.length - 1];
+    const dx = p[0] - lead[0], dy = p[1] - lead[1], dist = Math.hypot(dx, dy);
+    let nx = p[0], ny = p[1];
+    if (dist > d) { nx = lead[0] + dx / dist * d; ny = lead[1] + dy / dist * d; d = 0; } else { d -= dist; v.pi++; }
+    if (rev) v.spine.unshift([nx, ny]); else v.spine.push([nx, ny]);
+    trimSpine(v, rev);
+  }
+  syncSpine(v);
+  return v.pi >= v.path.length;
+}
+function carPoses(v) {
+  const cars = v.cap === 4 ? 2 : v.cap === 6 ? 3 : 4, gap = 2, seg = (v.len - gap * (cars - 1)) / cars;
+  const out = [];
+  for (let k = 0; k < cars; k++) {
+    const d0 = k * (seg + gap), a = spineAt(v, d0), b = spineAt(v, d0 + seg);
+    out.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, ang: Math.atan2(b[1] - a[1], b[0] - a[0]), seg, d0 });
+  }
+  return out;
+}
+// the route a train takes from wherever its nose is to platform i
+function trainRoute(v, i) {
+  const lead = v.spine[v.spine.length - 1];
+  let pts = [], sx = lead[0], sy = lead[1], ang = v.ang;
+  if (v.curvy) {
+    const t = G.curvyTracks[v.track];
+    const sf = v.s + v.dir * v.len / 2, end = v.dir > 0 ? t.L : 0;
+    for (let q = sf + v.dir * 6; v.dir > 0 ? q < end : q > end; q += v.dir * 6) pts.push(trackPoint(t, q));
+    const e = trackPoint(t, end);
+    pts.push(e); sx = e[0]; sy = e[1];
+    ang = trackAngle(t, end) + (v.dir < 0 ? PI : 0);
+  }
+  v.pathBx = bayPos(i)[0];
+  return smoothCorners([lead].concat(pts, ringRoute(sx, sy, ang, i, 7)), 14).slice(1);
+}
+
 function smoothCorners(pts, r) {
   const out = [pts[0]];
   for (let i = 1; i < pts.length - 1; i++) {
@@ -1011,20 +1318,20 @@ function smoothCorners(pts, r) {
   return out;
 }
 
-function ringPath(v, i) {
+function ringRoute(px, py, ang, i, by) {
   const R = RING;
-  const dx = Math.cos(v.ang), dy = Math.sin(v.ang);
+  const dx = Math.cos(ang), dy = Math.sin(ang);
   let t = Infinity;
-  if (dx > 1e-6) t = Math.min(t, (R.x + R.w - v.x) / dx);
-  if (dx < -1e-6) t = Math.min(t, (R.x - v.x) / dx);
-  if (dy > 1e-6) t = Math.min(t, (R.y + R.h - v.y) / dy);
-  if (dy < -1e-6) t = Math.min(t, (R.y - v.y) / dy);
-  const E = [v.x + dx * t, v.y + dy * t];
+  if (dx > 1e-6) t = Math.min(t, (R.x + R.w - px) / dx);
+  if (dx < -1e-6) t = Math.min(t, (R.x - px) / dx);
+  if (dy > 1e-6) t = Math.min(t, (R.y + R.h - py) / dy);
+  if (dy < -1e-6) t = Math.min(t, (R.y - py) / dy);
+  const E = [px + dx * t, py + dy * t];
   // snap onto the ring edge
   const near = [Math.abs(E[1] - R.y), Math.abs(E[0] - (R.x + R.w)), Math.abs(E[1] - (R.y + R.h)), Math.abs(E[0] - R.x)];
   const edge = near.indexOf(Math.min(...near));
   if (edge === 0) E[1] = R.y; else if (edge === 1) E[0] = R.x + R.w; else if (edge === 2) E[1] = R.y + R.h; else E[0] = R.x;
-  const bx = bayPos(i)[0], by = bayY(v);
+  const bx = bayPos(i)[0];
   const Tp = [bx, R.y];
   const P = 2 * (R.w + R.h);
   const perimS = ([x, y], e) => {
@@ -1043,8 +1350,12 @@ function ringPath(v, i) {
     corners.map(([s, p]) => [(sE - s + P) % P, p]).filter(([d]) => d > 0.5 && d < ccw).sort((a, b) => a[0] - b[0]).forEach(([, p]) => pts.push(p));
   }
   pts.push(Tp, [bx, by]);
-  v.pathBx = bx;
-  return smoothCorners([[v.x, v.y]].concat(pts), 14).slice(1);
+  return pts;
+}
+
+function ringPath(v, i) {
+  v.pathBx = bayPos(i)[0];
+  return smoothCorners([[v.x, v.y]].concat(ringRoute(v.x, v.y, v.ang, i, bayY(v))), 14).slice(1);
 }
 
 function depart(v) {
@@ -1228,13 +1539,25 @@ function updateVehicle(v, dt) {
       v.x = b.ox + Math.cos(v.ang) * b.s * f;
       v.y = b.oy + Math.sin(v.ang) * b.s * f;
       if (b.t >= b.d1 + 0.24) { v.x = b.ox; v.y = b.oy; v.state = 'lot'; v.bump = null; }
+      if (v.spine) setStraightSpine(v);
       break;
     }
     case 'runaway': {
       const r = v.run;
+      if (r.curvy) {
+        v.speed = Math.min(520, v.speed + dt * 900);
+        const done = trainAdvance(v, dt);
+        if (Math.random() < dt * 30) G.parts.push({ type: 'puff', x: v.x, y: v.y, vx: rand(-10, 10), vy: rand(-25, -10), life: 0.6, max: 0.6, size: 3, grow: 8, color: 'rgba(80,80,90,0.5)' });
+        if (done) {
+          if (r.target.state === 'lot' || r.target.state === 'bump') explode(v, r.target);
+          else { v.state = 'lot'; v.run = null; lotChanged(); }
+        }
+        break;
+      }
       r.t += dt;
       const f = Math.min(1, (r.t / r.T) * (r.t / r.T));
       v.x = r.ox + Math.cos(v.ang) * r.d * f; v.y = r.oy + Math.sin(v.ang) * r.d * f;
+      if (v.spine) setStraightSpine(v);
       if (Math.random() < dt * 30) G.parts.push({ type: 'puff', x: v.x, y: v.y, vx: rand(-10, 10), vy: rand(-25, -10), life: 0.6, max: 0.6, size: 3, grow: 8, color: 'rgba(80,80,90,0.5)' });
       if (f >= 1) {
         if (r.target.state === 'lot' || r.target.state === 'bump') explode(v, r.target);
@@ -1260,8 +1583,17 @@ function updateVehicle(v, dt) {
         for (let k = Math.max(v.pi, n - 8); k < n; k++) v.path[k] = [v.path[k][0] + dx, v.path[k][1], v.path[k][2]];
         v.pathBx = bx;
       }
+      if (v.spine && !v.lift) {
+        const tgt = v.path[n - 1], lead = v.spine[v.spine.length - 1];
+        if (v.pi >= n - 1) v.speed = Math.min(v.speed, Math.max(70, Math.hypot(tgt[0] - lead[0], tgt[1] - lead[1]) * 7));
+        if (trainAdvance(v, dt)) { v.state = 'bay'; v.parkT = 0.35; }
+        trail(v, dt);
+        break;
+      }
       if (v.pi >= n - 1) v.speed = Math.min(v.speed, Math.max(70, Math.hypot(bx - v.x, by - v.y) * 7)); // ease into the bay
-      if (followPath(v, dt)) { v.state = 'bay'; v.lift = false; v.parkT = 0.35; }
+      const arrived = followPath(v, dt);
+      if (v.spine) setStraightSpine(v);
+      if (arrived) { v.state = 'bay'; v.lift = false; v.parkT = 0.35; }
       trail(v, dt);
       break;
     }
@@ -1270,6 +1602,7 @@ function updateVehicle(v, dt) {
       const k = Math.min(1, dt * 10);
       v.x += (bx - v.x) * k; v.y += (by - v.y) * k;
       v.ang += angDiff(v.ang, -PI / 2) * Math.min(1, dt * 12);
+      if (v.spine) setStraightSpine(v);
       break;
     }
     case 'full': {
@@ -1289,6 +1622,11 @@ function updateVehicle(v, dt) {
         v.fly = clamp((BAY_CY - v.y) / 260, 0, 1);
       }
       v.speed = Math.min(v.maxSpeed, v.speed + dt * acc);
+      if (v.spine) {
+        if (trainAdvance(v, dt)) v.state = 'gone';
+        trail(v, dt);
+        break;
+      }
       if (followPath(v, dt)) v.state = 'gone';
       trail(v, dt);
       break;
@@ -1529,7 +1867,7 @@ function rebuildBg() {
 }
 
 // Sleepers and two rails along any polyline (used for curves and angled lines).
-function railPath(g, pts) {
+function railPath(g, pts, mode = 'both') {
   const segs = [];
   for (let i = 1; i < pts.length; i++) {
     const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
@@ -1538,13 +1876,14 @@ function railPath(g, pts) {
   }
   g.strokeStyle = '#7a5a3a'; g.lineWidth = 2.6; g.lineCap = 'butt';
   let carry = 0;
-  for (const sg of segs) {
+  if (mode !== 'rails') for (const sg of segs) {
     for (let t = carry; t < sg.L; t += 7) {
       const x = sg.ax + (sg.bx - sg.ax) * t / sg.L, y = sg.ay + (sg.by - sg.ay) * t / sg.L;
       g.beginPath(); g.moveTo(x - sg.nx * 7, y - sg.ny * 7); g.lineTo(x + sg.nx * 7, y + sg.ny * 7); g.stroke();
       carry = t + 7 - sg.L;
     }
   }
+  if (mode === 'sleepers') return;
   g.strokeStyle = '#5d6270'; g.lineWidth = 1.8; g.lineJoin = 'round';
   for (const side of [-4.4, 4.4]) {
     g.beginPath();
@@ -1750,6 +2089,12 @@ function paintBg(g, th) {
     g.fillStyle = 'rgba(120,100,80,0.18)';
     for (let i = 0; i < 260; i++) { circ(g, LOT.x + rng() * LOT.w, LOT.y + rng() * LOT.h, 1.2); g.fill(); }
     drawYardTracks(g, (G && G.tracks) || []);
+    if (G && G.curvyTracks) {
+      g.save(); g.beginPath(); g.rect(RING.x - 6, RING.y - 6, RING.w + 12, RING.h + 12); g.clip();
+      for (const t of G.curvyTracks) railPath(g, t.pts, 'sleepers');
+      for (const t of G.curvyTracks) railPath(g, t.pts, 'rails');
+      g.restore();
+    }
     railH(g, RING.x + 12, RING.x + RING.w - 12, RING.y);
     // the main line runs off both sides of the screen (into tunnels)
     railH(g, X0 - 10, RING.x + 12, RING.y);
@@ -1806,7 +2151,7 @@ const CIRCLE = {
   boat:  { path: '#d99a5b', edge: '#8a5526', island: '#38c8f4', rope: '#8b5a2b' },
   plane: { path: '#d6def2', edge: '#9aa8cc', island: '#b9ecff', rope: '#3d6bff' },
   train: { path: '#ead6ae', edge: '#c4a77a', island: '#a6e07a', rope: '#c45f1d' },
-  space: { path: '#4b3fa6', edge: '#7c5cff', island: '#1d1748', rope: '#8f7dff' },
+  space: { path: '#1c1450', edge: '#6ef3ff', island: '#0c0828', rope: '#6ef3ff' },
 };
 
 function walkway(g, pts, C, w) {
@@ -1834,12 +2179,14 @@ function drawQueueArea(g, th) {
     return [[F.xin, F.y0], [ox, oy], [gx, gy]];
   });
   const exitPath = [R.exitPt, R.exitOut];
+  if (th === 'space') { g.shadowColor = '#6ef3ff'; g.shadowBlur = 10; }
   for (const pth of paths) walkway(g, pth, C, 18);
   walkway(g, exitPath, C, 18);
   // the walkway people circle round
   rr(g, R.x, R.y + 2, R.w, R.h, R.r); g.lineWidth = 30; g.strokeStyle = 'rgba(0,0,0,0.1)'; g.stroke();
   rr(g, R.x, R.y, R.w, R.h, R.r);
   g.lineWidth = 30; g.strokeStyle = C.edge; g.stroke();
+  g.shadowBlur = 0;
   g.lineWidth = 26; g.strokeStyle = C.path; g.stroke();
   // open the walkway edge where the paths join, and mark which way people go
   for (const pth of paths) walkwayFill(g, pth, C, 18);
@@ -1857,9 +2204,9 @@ function drawQueueArea(g, th) {
     g.fillStyle = C.island; rr(g, ix, iy, iw, ih, ih / 2); g.fill();
     const fr = Math.min(ih, iw) / 2 - 5;
     if (th === 'space') {
-      const gl = g.createRadialGradient(cx, cy, 0, cx, cy, fr + 4);
-      gl.addColorStop(0, 'rgba(110,243,255,0.95)'); gl.addColorStop(0.45, 'rgba(124,92,255,0.6)'); gl.addColorStop(1, 'rgba(124,92,255,0)');
-      g.fillStyle = gl; circ(g, cx, cy, fr + 4); g.fill();
+      // a deep-space window the planet floats in (the planet itself is animated)
+      g.fillStyle = 'rgba(255,255,255,0.8)';
+      for (let k = 0; k < 18; k++) { circ(g, ix + ((k * 37) % iw), iy + ((k * 23) % ih), 0.7); g.fill(); }
     } else if (fr > 4) {
       g.fillStyle = '#e8e4dc'; circ(g, cx, cy, fr); g.fill();
       g.strokeStyle = '#c9c2b4'; g.lineWidth = 2; g.stroke();
@@ -1876,7 +2223,12 @@ function drawQueueArea(g, th) {
   for (const F of feeders) {
     const a = Math.min(F.xin, F.xout) - 10, b = Math.max(F.xin, F.xout) + 10;
     const yb = F.y0 + F.rowH / 2 + 1, yt = F.y0 - (F.rows - 1) * F.rowH - F.rowH / 2 - 1;
-    g.fillStyle = th === 'space' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.35)';
+    if (th === 'space') {
+      // glass boarding tubes
+      const tg = g.createLinearGradient(0, yt, 0, yb);
+      tg.addColorStop(0, 'rgba(110,243,255,0.18)'); tg.addColorStop(0.5, 'rgba(124,92,255,0.12)'); tg.addColorStop(1, 'rgba(110,243,255,0.18)');
+      g.fillStyle = tg;
+    } else g.fillStyle = 'rgba(255,255,255,0.35)';
     rr(g, a, yt, b - a, yb - yt, 10); g.fill();
     const inLeft = F.xin < F.xout;
     for (let k = 0; k < F.rows - 1; k++) {
@@ -1894,6 +2246,37 @@ function drawQueueArea(g, th) {
   }
 }
 
+// The space holding area: a ringed planet with a moon, which everyone orbits.
+function drawPlanet() {
+  const R = ring, cx = R.x + R.w / 2, cy = R.cy, t = G.time;
+  const pr = Math.max(6, Math.min(R.h, R.w) / 2 - 22);
+  const moonA = t * 0.9, mx = cx + Math.cos(moonA) * (pr + 7), my = cy + Math.sin(moonA) * (pr + 7) * 0.45;
+  const moon = () => {
+    ctx.fillStyle = '#d9d4ff'; circ(ctx, mx, my, 2.6); ctx.fill();
+    ctx.fillStyle = 'rgba(120,100,180,0.6)'; circ(ctx, mx + 0.8, my + 0.6, 0.9); ctx.fill();
+  };
+  // back half of the ring, then the moon if it is behind
+  ctx.strokeStyle = 'rgba(255,214,150,0.7)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(cx, cy, pr * 1.55, pr * 0.42, -0.25, PI, TAU); ctx.stroke();
+  if (Math.sin(moonA) < 0) moon();
+  // the planet, with bands that drift round
+  const pg = ctx.createRadialGradient(cx - pr * 0.35, cy - pr * 0.35, pr * 0.2, cx, cy, pr);
+  pg.addColorStop(0, '#ffd1f0'); pg.addColorStop(0.55, '#ff7ac8'); pg.addColorStop(1, '#7b3fe0');
+  ctx.fillStyle = pg; circ(ctx, cx, cy, pr); ctx.fill();
+  ctx.save(); circ(ctx, cx, cy, pr); ctx.clip();
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  for (let k = -3; k <= 3; k++) {
+    const off = ((t * 6 + k * pr * 0.55) % (pr * 4)) - pr * 2;
+    ctx.beginPath(); ctx.ellipse(cx + off * 0.2, cy + k * pr * 0.32, pr * 1.2, pr * 0.08, -0.25, 0, TAU); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(30,10,70,0.25)'; circ(ctx, cx + pr * 0.35, cy + pr * 0.3, pr); ctx.fill();
+  ctx.restore();
+  // front half of the ring, then the moon if it is in front
+  ctx.strokeStyle = 'rgba(255,214,150,0.95)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(cx, cy, pr * 1.55, pr * 0.42, -0.25, 0, PI); ctx.stroke();
+  if (Math.sin(moonA) >= 0) moon();
+}
+
 function drawCarouselFx() {
   const R = ring;
   // little arrows on the walkway show which way everyone is walking
@@ -1902,6 +2285,7 @@ function drawCarouselFx() {
   ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
   ctx.stroke();
   ctx.setLineDash([]); ctx.lineDashOffset = 0;
+  if (G.T.key === 'space') drawPlanet();
   // fountain spray
   if (G.T.key !== 'space' && R.h - 32 > 14) {
     const cx = R.x + R.w / 2, cy = R.cy;
@@ -1973,6 +2357,20 @@ function drawPerson(x, y, c, skin, hair, bob, scale) {
   ctx.save();
   ctx.translate(x, y);
   if (scale !== 1) ctx.scale(scale, scale);
+  if (G && G.T.key === 'space') {
+    // astronaut: coloured spacesuit, backpack, bubble helmet with a visor
+    ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(0, 6, 5.5, 2.4, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#c9cde0'; rr(ctx, -4, -1 + bob * 0.4, 8, 6, 2); ctx.fill();
+    ctx.fillStyle = c === PARTY ? rainbowGrad(5, 0) : col.main;
+    ctx.strokeStyle = c === PARTY ? '#6a2fb8' : col.dark; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.ellipse(0, 2 + bob * 0.4, 5, 5.2, 0, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffffff'; circ(ctx, 0, -4 + bob, 4.4); ctx.fill();
+    ctx.strokeStyle = '#b7bdd6'; ctx.lineWidth = 0.8; ctx.stroke();
+    ctx.fillStyle = c === PARTY ? '#ffd23f' : '#23305e'; ctx.beginPath(); ctx.ellipse(0, -3.6 + bob, 3, 2.2, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.8)'; circ(ctx, -1.1, -4.4 + bob, 0.8); ctx.fill();
+    ctx.restore();
+    return;
+  }
   ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(0, 6, 5.5, 2.4, 0, 0, TAU); ctx.fill();
   ctx.fillStyle = c === PARTY ? rainbowGrad(5, 0) : col.main;
   ctx.strokeStyle = c === PARTY ? '#6a2fb8' : col.dark; ctx.lineWidth = 1.3;
@@ -2172,6 +2570,68 @@ function drawTrain(v, col) {
   }
 }
 
+function carSeats(cap, cars) {
+  const base = Math.floor(cap / cars), out = new Array(cars).fill(base);
+  for (let i = 0; i < cap - base * cars; i++) out[i]++; // extra windows go to the rear carriages
+  return out;
+}
+function drawTrainSpine(v, col, shOff, wob) {
+  const hw = v.wid / 2, poses = carPoses(v), cars = poses.length, seg = poses[0].seg;
+  const jig = wob ? wob * 20 : 0;
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  for (const c of poses) { ctx.save(); ctx.translate(c.x + shOff * 0.6, c.y + shOff); ctx.rotate(c.ang); rr(ctx, -seg / 2, -hw, seg, v.wid, 3); ctx.fill(); ctx.restore(); }
+  // gangway connectors bend with the train
+  ctx.strokeStyle = '#2b2b38'; ctx.lineWidth = v.wid - 8; ctx.lineCap = 'butt';
+  for (let k = 0; k < cars - 1; k++) {
+    const a = spineAt(v, poses[k].d0 + seg - 1), b = spineAt(v, poses[k + 1].d0 + 1);
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  const per = carSeats(v.cap, cars);
+  // seats fill from the front carriage backwards
+  const start = []; let acc = 0;
+  for (let k = cars - 1; k >= 0; k--) { start[k] = acc; acc += per[k]; }
+  poses.forEach((c, k) => {
+    const loco = k === cars - 1, x0 = -seg / 2, x1 = seg / 2;
+    const cc = v.revealed && v.color === PARTY ? partyCol(seg / 2, 0) : col;
+    ctx.save();
+    ctx.translate(c.x + Math.sin(G.time * 45 + k) * jig * 0.05, c.y);
+    ctx.rotate(c.ang);
+    if (loco) headBeam(x1, 3, 7, 24);
+    if (loco) trainNosePath(x0, x1, hw); else rr(ctx, x0, -hw, seg, v.wid, 2.5);
+    ctx.fillStyle = cc.dark; ctx.fill();
+    if (loco) trainNosePath(x0 + 0.6, x1 - 0.6, hw - 1.1); else rr(ctx, x0 + 0.6, -hw + 0.6, seg - 1.2, v.wid - 2.6, 2);
+    ctx.fillStyle = cc.main; ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.22)'; rr(ctx, x0 + 2, -hw * 0.38, seg - (loco ? 12 : 4), hw * 0.76, 1.5); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(x0 + 1.5, -hw + 1.1, seg - (loco ? 8 : 3), 0.8);
+    ctx.fillRect(x0 + 1.5, hw - 2.1, seg - (loco ? 8 : 3), 0.8);
+    if (loco) {
+      ctx.save(); trainNosePath(x0, x1, hw); ctx.clip();
+      ctx.fillStyle = '#ffd23f'; ctx.fillRect(x1 - 5.5, -hw, 6, v.wid);
+      ctx.restore();
+      ctx.fillStyle = '#1d2848'; rr(ctx, x1 - 10, -hw + 2.4, 4, v.wid - 4.8, 1.5); ctx.fill();
+      ctx.fillStyle = 'rgba(150,215,255,0.85)'; ctx.fillRect(x1 - 9.3, -hw + 3.4, 1, v.wid - 6.8);
+      ctx.fillStyle = '#fffbe0'; circ(ctx, x1 - 1.6, -hw + 4.2, 1.3); ctx.fill(); circ(ctx, x1 - 1.6, hw - 4.2, 1.3); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,0.32)'; circ(ctx, x0 + 5, 0, 2.4); ctx.fill();
+    } else {
+      ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(-2.5, -1.2, 5, 2.4);
+    }
+    // windows: they fill with passengers' colours as people board
+    const n = per[k], cols = Math.ceil(n / 2), wx0 = x0 + 3, wx1 = x1 - (loco ? 12 : 3), step = (wx1 - wx0) / Math.max(1, cols);
+    for (let w = 0; w < n; w++) {
+      const i = start[k] + w, ci = Math.floor(w / 2);
+      const x = wx1 - (ci + 0.5) * step, y = w % 2 ? hw - 3.9 : -hw + 3.9;
+      if (i < v.filled) {
+        ctx.fillStyle = seatFill(v, i); rr(ctx, x - 2.4, y - 1.6, 4.8, 3.2, 1); ctx.fill();
+        ctx.fillStyle = '#ffd9b8'; circ(ctx, x, y, 0.95); ctx.fill();
+      } else { ctx.fillStyle = '#c7ecff'; rr(ctx, x - 2.4, y - 1.6, 4.8, 3.2, 1); ctx.fill(); }
+      ctx.strokeStyle = 'rgba(20,30,60,0.55)'; ctx.lineWidth = 0.7; ctx.stroke();
+    }
+    if (v.lock > 0) { ctx.fillStyle = 'rgba(40,30,70,0.25)'; rr(ctx, x0, -hw, seg, v.wid, 3); ctx.fill(); }
+    ctx.restore();
+  });
+}
+
 function rocketBody(hl, hw) {
   const bw = hw * 0.66;
   ctx.beginPath();
@@ -2251,6 +2711,12 @@ function drawVehicle(v) {
   if (v.pulse > 0) sc *= 1 + 0.06 * v.pulse;
   const wob = v.wobble > 0 ? Math.sin(G.time * 45) * 0.1 * v.wobble : 0;
 
+  if (v.spine) {
+    ctx.save();
+    ctx.translate(v.x, v.y); ctx.scale(sc, sc); ctx.translate(-v.x, -v.y);
+    drawTrainSpine(v, col, shOff, wob);
+    ctx.restore();
+  } else {
   ctx.save();
   ctx.translate(v.x, v.y);
   ctx.scale(sc, sc);
@@ -2270,6 +2736,7 @@ function drawVehicle(v) {
   else drawPlane(v, col);
   if (v.lock > 0) { ctx.fillStyle = 'rgba(40,30,70,0.25)'; silhouette(v); ctx.fill(); }
   ctx.restore();
+  }
 
   if (!v.revealed) {
     ctx.fillStyle = 'rgba(40,40,60,0.55)'; circ(ctx, v.x, v.y, 9); ctx.fill();
@@ -2304,7 +2771,36 @@ const GARAGE_STYLE = {
   train: { roof: '#c46a4a', dark: '#8a4630', door: '#3b2a24' },
   space: { roof: '#7c5cff', dark: '#4a33c9', door: '#140d36' },
 };
+function drawBlackHole(g) {
+  const t = G.time, wob = g.wobble > 0 ? Math.sin(t * 45) * 2 * g.wobble : 0;
+  ctx.save();
+  ctx.translate(g.x + wob, g.y);
+  const glow = ctx.createRadialGradient(0, 0, 6, 0, 0, 34);
+  glow.addColorStop(0, 'rgba(255,140,90,0.55)'); glow.addColorStop(0.5, 'rgba(200,80,255,0.25)'); glow.addColorStop(1, 'rgba(120,60,255,0)');
+  ctx.fillStyle = glow; circ(ctx, 0, 0, 34); ctx.fill();
+  // swirling accretion disc
+  for (let k = 0; k < 5; k++) {
+    ctx.save();
+    ctx.rotate(t * (1.6 - k * 0.2) + k * 1.3);
+    ctx.strokeStyle = ['#ffd23f', '#ff8c42', '#ff5fa2', '#c084ff', '#6ef3ff'][k];
+    ctx.globalAlpha = 0.85 - k * 0.12;
+    ctx.lineWidth = 2.6 - k * 0.3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.ellipse(0, 0, 14 + k * 3.4, 11 + k * 2.6, 0, 0, PI * 1.3); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#05030c'; circ(ctx, 0, 0, 11); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,220,160,0.9)'; ctx.lineWidth = 1.2; circ(ctx, 0, 0, 11.5); ctx.stroke();
+  ctx.restore();
+  // little sparks spiralling in
+  if (Math.random() < 0.3) {
+    const a = rand(0, TAU), r = rand(26, 36);
+    G.parts.push({ type: 'spark', x: g.x + Math.cos(a) * r, y: g.y + Math.sin(a) * r, vx: -Math.cos(a) * 40 - Math.sin(a) * 30, vy: -Math.sin(a) * 40 + Math.cos(a) * 30, life: 0.6, max: 0.6, size: 1.6, color: pick(['#ffd23f', '#ff8fc8', '#bfa2ff']) });
+  }
+}
+
 function drawGarage(g) {
+  if (g.hole) { drawBlackHole(g); return; }
   const st = GARAGE_STYLE[G.T.key];
   const hl = g.len / 2, hw = g.wid / 2;
   const wob = g.wobble > 0 ? Math.sin(G.time * 45) * 0.05 * g.wobble : 0;
