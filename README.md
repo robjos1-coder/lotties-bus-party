@@ -7,7 +7,7 @@ A bright, tap-to-play traffic-jam puzzle for your phone, in the style of Bus Fev
 ## How to play
 - **Tap** a vehicle to drive it out of the lot. It only moves if **nothing is in its way**. Tap a blocked one and it bumps (and costs you a star).
 - Vehicles drive round to the bays at the top.
-- Passengers ride the **party carousel 🎠** and hop onto vehicles of **their colour**. More people wait in line to get on.
+- Passengers walk round the **holding circle** and leave through the gap at the bottom to board vehicles of **their colour**. Two feeder lines top the circle up, so you can see which colours are coming next.
 - Full vehicles drive off, sail away, take off down the runway or blast into space!
 - If every bay fills up with colours nobody on the carousel wants, it's a **Traffic Jam**.
 
@@ -17,7 +17,7 @@ A bright, tap-to-play traffic-jam puzzle for your phone, in the style of Bus Fev
 | 1–5 | 🚌 City Streets | Bus depots 🏠: buses come out one at a time, only when the spot in front of the door is clear |
 | 6–10 | ⛵ Sunny Harbour | Mystery boats 🎁 hide their colour until they have a clear way out |
 | 11–15 | ✈️ Sky Airport | Refuelling planes ⛽ stay locked until enough others have flown. Planes taxi to the runway to take off |
-| 16–20 | 🚂 Rail Yard | Trains wait nose-to-tail on sidings. Only the end train can leave, so the order really matters |
+| 16–20 | 🚂 Rail Yard | Trains wait nose-to-tail on sidings. Only the end train can leave, so the order really matters. From level 18 it's **Spaghetti Junction** 🍝, with criss-crossing tracks. Keep tapping a blocked train and it **crashes** 💥 |
 | 21–25 | 🚀 Star Port | The hardest world: only 4 docking ports, drifting asteroids ☄️ that block launches, plus mystery and charging rockets |
 | 26+ | Remix worlds | Everything mixed together, harder every level |
 

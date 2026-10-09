@@ -136,9 +136,11 @@ function levelConfig(L) {
   const garageSize = 2 + Math.min(3, Math.floor(L / 8));
   const asteroids = space ? Math.min(5, 2 + Math.floor(stage / 2) + cycle) : 0;
   const capW = L <= 3 ? { 4: 0.55, 6: 0.45, 10: 0 } : L <= 10 ? { 4: 0.35, 6: 0.45, 10: 0.2 } : { 4: 0.25, 6: 0.42, 10: 0.33 };
-  const pods = clamp(24 - Math.floor(L / 2), 12, 24); // carousel seats: fewer riders = less choice
+  const pods = clamp(24 - Math.floor(L / 2), 12, 24); // holding-circle size: fewer people = less choice
+  // later Rail Yard levels criss-cross the tracks so it's hard to see what blocks what
+  const spaghetti = theme === 'train' && (stage >= 2 || cycle > 0) ? Math.min(10, 4 + stage + cycle * 2) : 0;
   return {
-    L, theme, cycle, stage, party, n, colors, open, stick, pods, bays, garages, garageSize, asteroids,
+    L, theme, cycle, stage, party, n, colors, open, stick, pods, bays, garages, garageSize, asteroids, spaghetti,
     diag: L >= 4 && theme !== 'train', mysteryFrac, lockCount, capW, world: wi + 1,
   };
 }
@@ -151,8 +153,8 @@ const WORLD_BOTTOM = LOT.y + LOT.h + ROAD + 8;
 const BAY_CY = BAY_H / 2 + 2;
 
 let view = null;
-let queueSlots = [];   // waiting-line spots (index 0 = next to join the carousel)
-let ring = null;       // carousel track geometry (stadium centreline)
+let ring = null;       // holding-circle walkway geometry (stadium centreline)
+let feeders = [];      // the two feeder lines: spots from the front (next to the circle) backwards
 
 let lastLayoutKey = '';
 function layoutKey() {
@@ -184,38 +186,44 @@ function computeLayout() {
   bgDirty = true;
 }
 
-let lane = null;       // waiting-line area next to the carousel
-
 function buildQueueArea() {
   const qTop = -8 - view.qH, qBot = -6;
-  // Carousel: riders stand shoulder to shoulder, so the loop is sized to fit its seats.
+  // Holding circle: people walk round it shoulder to shoulder, so it is sized to fit them.
   const SP = 14.5;
   const n = G ? G.pods.length : 20;
   const P = n * SP;
   const h = Math.min(qBot - qTop - 26, P / PI);
   const ls = Math.max(0, (P - PI * h) / 2);
-  const x = 18, y = (qTop + qBot) / 2 - h / 2;
-  ring = { x, y, w: ls + h, h, r: h / 2, ls, P: 2 * ls + PI * h, cy: y + h / 2, qTop, qBot };
-  // Waiting line: a snake to the right, the front next to the carousel.
-  const xs = x + ring.w + 30, xe = 384, rowH = 16;
+  const w = ls + h;
+  const x = LW / 2 - w / 2, y = (qTop + qBot) / 2 - h / 2;
+  ring = { x, y, w, h, r: h / 2, ls, P: 2 * ls + PI * h, cy: y + h / 2, qTop, qBot };
+  // Gaps in the walkway: an entrance at the lower left and lower right (from each feeder line)
+  // and an exit at the bottom that leads down to the loading bays.
+  const r = h / 2;
+  ring.exitS = ls + PI * r + ls / 2;
+  ring.gateS = [2 * ls + PI * r + PI * r / 4, ls + PI * r * 3 / 4];
+  ring.exitPt = [LW / 2, y + h];
+  ring.exitOut = [LW / 2, qBot + 4];
+  // Feeder lines either side: the front is next to the circle, then they zig-zag outwards.
+  const rowH = 16, y0 = qBot - 13;
   const rows = Math.max(1, Math.floor((qBot - qTop - 18) / rowH));
-  const y0 = qBot - 13;
-  const pts = [];
-  for (let k = 0; k < rows; k++) {
-    const yy = y0 - k * rowH;
-    if (k % 2 === 0) pts.push([xs, yy], [xe, yy]); else pts.push([xe, yy], [xs, yy]);
-  }
-  const WS = 14, slots = [pts[0].slice()];
-  let dist = 0;
-  for (let i = 1; i < pts.length; i++) {
-    const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
-    const L = Math.hypot(bx - ax, by - ay);
-    let t = WS - dist;
-    while (t <= L) { slots.push([ax + (bx - ax) * t / L, ay + (by - ay) * t / L]); t += WS; }
-    dist = L - (t - WS);
-  }
-  queueSlots = slots;
-  lane = { xs, xe, rows, rowH, y0, qTop, qBot };
+  feeders = [[x - 31, 14], [x + w + 31, 386]].map(([xin, xout]) => {
+    const pts = [];
+    for (let k = 0; k < rows; k++) {
+      const yy = y0 - k * rowH;
+      if (k % 2 === 0) pts.push([xin, yy], [xout, yy]); else pts.push([xout, yy], [xin, yy]);
+    }
+    const WS = 14, slots = [pts[0].slice()];
+    let dist = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+      const L = Math.hypot(bx - ax, by - ay);
+      let t = WS - dist;
+      while (t <= L) { slots.push([ax + (bx - ax) * t / L, ay + (by - ay) * t / L]); t += WS; }
+      dist = L - (t - WS);
+    }
+    return { slots, xin, xout, rows, rowH, y0 };
+  });
 }
 
 function ringPoint(s) {
@@ -231,7 +239,15 @@ function ringPoint(s) {
   const a = PI / 2 + s / R.r;
   return [R.x + R.r + Math.cos(a) * R.r, R.cy + Math.sin(a) * R.r];
 }
-function podPos(i) { return ringPoint(G.rot + i * ring.P / G.pods.length); }
+function podS(i) { return ((G.rot + i * ring.P / G.pods.length) % ring.P + ring.P) % ring.P; }
+function podPos(i) { return ringPoint(podS(i)); }
+function gateOut(li) {
+  // a point just outside the walkway at entrance li (0 = left, 1 = right)
+  const [x, y] = ringPoint(ring.gateS[li]);
+  const [x2, y2] = ringPoint(ring.gateS[li] + 1);
+  const nx = y2 - y, ny = -(x2 - x), nl = Math.hypot(nx, ny) || 1;
+  return [x + nx / nl * 17, y + ny / nl * 17];
+}
 
 function bayW() { const n = G ? G.bays.length : 5; return Math.min(76, 384 / n); }
 function bayPos(i) { const n = G.bays.length; return [LW / 2 + (i - (n - 1) / 2) * bayW(), BAY_CY]; }
@@ -352,20 +368,30 @@ function tryGenerate(cfg, T, rng) {
   };
   let tracks = null;
   if (cfg.theme === 'train') {
-    // parallel sidings packed nose-to-tail, mostly facing the nearer end of the yard
-    const k = 7;
     tracks = [];
-    for (let i = 0; i < k; i++) tracks.push(LOT.y + 26 + i * (LOT.h - 52) / (k - 1));
-    for (const ty of tracks) {
-      let cur = LOT.x + 3 + rng() * 10;
-      for (;;) {
+    if (cfg.spaghetti) {
+      // Spaghetti Junction: straight lines at all sorts of angles criss-crossing the yard
+      const angs = [0, PI / 2, PI / 6, -PI / 6, PI / 4, -PI / 4, PI / 3, -PI / 3];
+      for (let i = 0; i < cfg.spaghetti; i++) {
+        tracks.push({ x: LOT.x + 40 + rng() * (LOT.w - 80), y: LOT.y + 40 + rng() * (LOT.h - 80), ang: angs[(rng() * angs.length) | 0] });
+      }
+    } else {
+      // parallel sidings
+      for (let i = 0; i < 7; i++) tracks.push({ x: LOT.x + LOT.w / 2, y: LOT.y + 26 + i * (LOT.h - 52) / 6, ang: 0 });
+    }
+    // trains sit nose-to-tail along each line, mostly facing the nearer end
+    for (const t of tracks) {
+      const c = Math.cos(t.ang), s = Math.sin(t.ang);
+      let cur = -430 + rng() * 10;
+      while (cur < 430) {
         const cap = capPick();
-        const len = T.sizes[cap][0];
-        if (cur + len > LOT.x + LOT.w - 3) break;
-        const cx = cur + len / 2;
-        const ang = rng() < (cx < LOT.x + LOT.w / 2 ? 0.72 : 0.28) ? PI : 0;
-        lotV.push(mk(cap, ang, cx, ty));
-        cur += len + 6 + rng() * 12;
+        const len = T.sizes[cap][0], wid = T.sizes[cap][1];
+        const mid = cur + len / 2;
+        const ang = rng() < (mid < 0 ? 0.72 : 0.28) ? t.ang + PI : t.ang;
+        const v = mk(cap, ang, t.x + c * mid, t.y + s * mid);
+        const ex = Math.abs(c) * len / 2 + Math.abs(s) * wid / 2, ey = Math.abs(s) * len / 2 + Math.abs(c) * wid / 2;
+        const inside = v.x - ex >= LOT.x + 2 && v.x + ex <= LOT.x + LOT.w - 2 && v.y - ey >= LOT.y + 2 && v.y + ey <= LOT.y + LOT.h - 2;
+        if (inside && fits(v)) { lotV.push(v); cur += len + 6 + rng() * 12; } else cur += 5;
       }
     }
     shuffle(lotV, rng);
@@ -468,7 +494,10 @@ function generateLevel(cfg) {
 /* ----------------------------------------------------------------- audio */
 const Snd = {
   ctx: null, master: null, nb: null,
+  // iOS only allows audio to start from a completed tap, and mutes web audio when the
+  // silent switch is on unless the page asks for "playback" audio.
   unlock() {
+    if (navigator.audioSession) { try { navigator.audioSession.type = 'playback'; } catch (e) { /* ignore */ } }
     if (!this.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
@@ -477,7 +506,28 @@ const Snd = {
       this.master.gain.value = 0.55;
       this.master.connect(this.ctx.destination);
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume();
+    if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
+    if (!this.kicked) {
+      // a one-sample silent sound wakes the audio output up on iOS
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.ctx.createBuffer(1, 1, 22050);
+      src.connect(this.ctx.destination);
+      src.start(0);
+      this.kicked = true;
+    }
+    if (!navigator.audioSession && save.sound) {
+      // older iOS: a silent looping <audio> puts the page in playback mode
+      if (!this.el) {
+        this.el = new Audio(silentWav());
+        this.el.loop = true;
+        this.el.setAttribute('playsinline', '');
+      }
+      if (this.el.paused) this.el.play().catch(() => {});
+    }
+  },
+  sleep() {
+    if (this.el && !this.el.paused) this.el.pause();
+    if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
   },
   ok() { return save.sound && this.ctx && this.ctx.state === 'running'; },
   tone(f, d, type = 'sine', v = 0.2, f2 = null, delay = 0) {
@@ -512,6 +562,19 @@ const Snd = {
     src.start(t); src.stop(t + d + 0.05);
   },
 };
+function silentWav() {
+  const n = 4000, bytes = new Uint8Array(44 + n);
+  const dv = new DataView(bytes.buffer);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) bytes[o + i] = t.charCodeAt(i); };
+  str(0, 'RIFF'); dv.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 8000, true); dv.setUint32(28, 8000, true); dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+  str(36, 'data'); dv.setUint32(40, n, true);
+  bytes.fill(128, 44);
+  let bin = '';
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return 'data:audio/wav;base64,' + btoa(bin);
+}
 const semi = (base, s) => base * Math.pow(2, s / 12);
 const sfx = {
   go() {
@@ -539,6 +602,11 @@ const sfx = {
     else if (k === 'train') { Snd.tone(330, 0.22, 'sawtooth', 0.06); Snd.tone(415, 0.22, 'sawtooth', 0.05); }
     else if (k === 'space') Snd.tone(660, 0.2, 'square', 0.05, 220);
     else { Snd.tone(370, 0.17, 'square', 0.06); Snd.tone(466, 0.17, 'square', 0.05); }
+  },
+  boom() {
+    Snd.noise(1.4, 0.4, 0, 1400, 60);
+    Snd.tone(110, 0.9, 'sawtooth', 0.12, 30);
+    Snd.tone(70, 1.2, 'sine', 0.3, 25);
   },
   nope() { Snd.tone(220, 0.14, 'triangle', 0.15, 140); },
   coin() { Snd.tone(988, 0.05, 'square', 0.04); Snd.tone(1319, 0.12, 'square', 0.04, null, 0.05); },
@@ -597,8 +665,8 @@ function startLevel(n) {
   }
   G = {
     level: n, cfg, T,
-    vehicles: gen.vehicles, garages, asteroids, tracks: gen.tracks,
-    waiting: gen.queue.map(newPassenger),
+    vehicles: gen.vehicles, garages, asteroids, tracks: gen.tracks, wrecks: [], flash: 0,
+    lines: [[], []], nextLine: 0,
     pods: new Array(cfg.pods).fill(null), rot: 0, refillT: 0,
     walkers: [], parts: [], floats: [],
     bays: new Array(cfg.bays).fill(null),
@@ -610,13 +678,15 @@ function startLevel(n) {
     tutorial: n === 1 && !save.seen.tut, hint: null, hintT: 0,
   };
   computeLayout();
-  // the carousel starts fully loaded; everyone else waits in line
-  for (let i = 0; i < G.pods.length && G.waiting.length; i++) {
-    const p = G.waiting.shift();
+  // the holding circle starts full; everyone else is split between the two feeder lines in turn
+  const everyone = gen.queue.map(newPassenger);
+  for (let i = 0; i < G.pods.length && everyone.length; i++) {
+    const p = everyone.shift();
     [p.x, p.y] = podPos(i);
     G.pods[i] = p;
   }
-  G.waiting.forEach((p, i) => { [p.x, p.y] = queueSlots[Math.min(i, queueSlots.length - 1)]; });
+  everyone.forEach((p, i) => G.lines[i % 2].push(p));
+  G.lines.forEach((line, li) => line.forEach((p, i) => { [p.x, p.y] = feeders[li].slots[Math.min(i, feeders[li].slots.length - 1)]; }));
   lotChanged(true);
   bgDirty = true;
   hideMenu();
@@ -634,7 +704,8 @@ function showIntros() {
       emoji: '🎉', title: "Lottie's Bus Party!",
       html: `<p>Everyone's off to the party — get them there!</p>
         <div class="tip">👆 <b>Tap</b> a vehicle to drive it out. It only moves if <b>nothing is in its way</b>.</div>
-        <div class="tip">🎠 Passengers ride the <b>party carousel</b> and hop onto vehicles of <b>their colour</b>. Full vehicles zoom off!</div>
+        <div class="tip">🔄 Passengers walk round the <b>holding circle</b> and hop onto vehicles of <b>their colour</b>. Full vehicles zoom off!</div>
+        <div class="tip">👀 Two lines feed in through the side gaps: look at them to see which colours are coming next. People leave through the gap at the bottom.</div>
         <div class="tip">🅿️ Don't fill every bay with the <b>wrong colours</b> or it's a jam!</div>`,
     });
   }
@@ -657,7 +728,8 @@ function showIntros() {
       pages.push({
         emoji: '🚂', title: 'Rail Yard',
         html: `<p>Trains wait nose-to-tail on long sidings. Only a train with <b>nothing in front of it</b> can pull out to the platforms.</p>
-          <div class="tip">🧠 Think ahead: the train you need might be stuck at the back of a siding!</div>`,
+          <div class="tip">🧠 Think ahead: the train you need might be stuck at the back of a siding!</div>
+          <div class="tip">💥 Keep tapping a blocked train and it will <b>crash</b>. Both trains are wrecked, their passengers go home and you can only get 1 star!</div>`,
       });
     } else if (cfg.cycle === 0 && cfg.theme === 'space') {
       pages.push({
@@ -672,6 +744,14 @@ function showIntros() {
         html: `<p>Welcome back! This time <b>mystery</b> 🎁, <b>locked</b> ${T.lockIcon} and <b>${T.garage}</b> 🏠 ${T.plural} are everywhere. Good luck!</p>`,
       });
     }
+  }
+  if (cfg.spaghetti && !save.seen.spag) {
+    save.seen.spag = 1;
+    pages.push({
+      emoji: '🍝', title: 'Spaghetti Junction!',
+      html: `<p>The tracks criss-cross everywhere now. A train sitting on a <b>crossing</b> blocks the other line too.</p>
+        <div class="tip">🔍 Follow each line carefully before you tap. Remember what happens to trains that are tapped when blocked! 💥</div>`,
+    });
   }
   if (cfg.garages && !save.seen.garage) {
     save.seen.garage = 1;
@@ -717,7 +797,7 @@ function respawnAsteroid(a) {
 
 function obstaclesFor(v, withRocks) {
   const list = G.vehicles.filter((u) => u !== v && (u.state === 'lot' || u.state === 'bump' || u.state === 'emerging'));
-  return withRocks ? list.concat(G.garages, G.asteroids.filter((a) => a.active)) : list.concat(G.garages);
+  return withRocks ? list.concat(G.garages, G.wrecks, G.asteroids.filter((a) => a.active)) : list.concat(G.garages, G.wrecks);
 }
 function getBlockers(v, withRocks = true) {
   const sw = sweepBox(homeBox(v));
@@ -763,7 +843,18 @@ function handleTap(x, y) {
     return;
   }
   const blockers = getBlockers(hit);
-  if (blockers.length) { startBump(hit, blockers); return; }
+  if (blockers.length) {
+    if (G.T.key === 'train') {
+      hit.wrong = (hit.wrong || 0) + 1;
+      const first = firstHit(hit, blockers);
+      if (hit.wrong >= 3 && first.u.cap) { startRunaway(hit, first.u, first.d); return; }
+      startBump(hit, blockers);
+      if (hit.wrong === 2) toast('⚠️ Careful! Tap it again and it will crash!', 1.8);
+      return;
+    }
+    startBump(hit, blockers);
+    return;
+  }
   if (free < 0) { hit.wobble = 1; sfx.nope(); toast('All bays are full!'); return; }
   sendToBay(hit, free);
 }
@@ -800,17 +891,89 @@ function liftVehicle(v, i) {
   refreshHUD();
 }
 
-function startBump(v, blockers) {
+// how far v can roll forward before touching the first thing in its way, and what that is
+function firstHit(v, blockers) {
   const c = Math.cos(v.ang), s = Math.sin(v.ang);
   const boxes = blockers.map(homeBox);
-  let d = 0, hit = blockers[0];
-  outer: for (d = 0; d < 1000; d += 2) {
+  for (let d = 0; d < 1000; d += 2) {
     const b = { cx: v.x + c * (d + 2), cy: v.y + s * (d + 2), ang: v.ang, hl: v.len / 2, hw: v.wid / 2 - 1.5 };
-    for (let k = 0; k < boxes.length; k++) if (overlap(b, boxes[k])) { hit = blockers[k]; break outer; }
+    for (let k = 0; k < boxes.length; k++) if (overlap(b, boxes[k])) return { u: blockers[k], d };
   }
+  return { u: blockers[0], d: 0 };
+}
+
+function startBump(v, blockers) {
+  const { u: hit, d } = firstHit(v, blockers);
   v.state = 'bump';
   v.bump = { ox: v.x, oy: v.y, s: d, t: 0, d1: Math.max(0.06, d / 650), hit, hitDone: false };
   G.crashes++;
+}
+
+function startRunaway(v, target, d) {
+  v.state = 'runaway';
+  v.run = { ox: v.x, oy: v.y, d, t: 0, T: Math.max(0.35, Math.sqrt(2 * d / 700)), target };
+  target.wobble = 1;
+  sfx.honk(); buzz(40);
+}
+
+// Remove up to n waiting passengers of a colour, from the back of the lines first, then the circle.
+function dropPassengers(color, n) {
+  let gone = 0;
+  for (let i = Math.max(G.lines[0].length, G.lines[1].length) - 1; i >= 0 && gone < n; i--) {
+    for (const line of G.lines) {
+      if (gone < n && i < line.length && line[i].c === color) {
+        const p = line.splice(i, 1)[0];
+        G.parts.push({ type: 'puff', x: p.x, y: p.y, vx: 0, vy: -20, life: 0.5, max: 0.5, size: 4, grow: 6, color: 'rgba(255,255,255,0.8)' });
+        gone++;
+      }
+    }
+  }
+  for (let i = 0; i < G.pods.length && gone < n; i++) {
+    const p = G.pods[i];
+    if (p && p.c === color && !p.leaving) {
+      G.pods[i] = null;
+      G.parts.push({ type: 'puff', x: p.x, y: p.y, vx: 0, vy: -20, life: 0.5, max: 0.5, size: 4, grow: 6, color: 'rgba(255,255,255,0.8)' });
+      gone++;
+    }
+  }
+  return gone;
+}
+
+function explode(v, u) {
+  const cx = v.x + Math.cos(v.ang) * v.len / 2, cy = v.y + Math.sin(v.ang) * v.len / 2;
+  v.state = 'gone'; u.state = 'gone';
+  // fireball, smoke, sparks and flying bits of train
+  for (let i = 0; i < 28; i++) {
+    const a = rand(0, TAU), sp = rand(30, 150);
+    G.parts.push({ type: 'puff', x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rand(0.5, 1), max: 1, size: rand(7, 15), grow: 26, color: pick(['rgba(255,243,160,0.95)', 'rgba(255,210,63,0.95)', 'rgba(255,140,66,0.9)', 'rgba(255,77,109,0.85)']) });
+  }
+  for (let i = 0; i < 16; i++) {
+    G.parts.push({ type: 'puff', x: cx + rand(-14, 14), y: cy + rand(-14, 14), vx: rand(-20, 20), vy: rand(-45, -15), life: rand(1.2, 2), max: 2, size: rand(8, 13), grow: 34, color: 'rgba(60,50,70,0.5)' });
+  }
+  for (let i = 0; i < 34; i++) {
+    const a = rand(0, TAU), sp = rand(120, 300);
+    G.parts.push({ type: 'spark', x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: rand(0.4, 0.9), max: 0.9, size: rand(1.5, 3), color: pick(['#fff3a0', '#ffd23f', '#ffffff']) });
+  }
+  for (const w of [v, u]) {
+    for (let i = 0; i < 6; i++) {
+      const a = rand(0, TAU), sp = rand(80, 200);
+      G.parts.push({ type: 'star', x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.9, max: 0.9, size: rand(3, 5), color: w.color === PARTY ? pick(RAINBOW) : PAL[w.color].main, rot: rand(0, TAU), vr: rand(-12, 12) });
+    }
+  }
+  G.parts.push({ type: 'ring', x: cx, y: cy, vx: 0, vy: 0, life: 0.45, max: 0.45, size: 20, color: 'rgba(255,220,120,0.9)' });
+  G.flash = 0.25; G.shake = 0.7;
+  sfx.boom(); buzz([80, 40, 120]);
+  // a burning wreck blocks the siding for a while
+  G.wrecks.push({ x: cx, y: cy, ang: v.ang, len: 40, wid: 24, t: 10, max: 10 });
+  // the passengers who would have ridden these trains go home in a huff
+  const gone = dropPassengers(v.color, v.cap) + dropPassengers(u.color, u.cap);
+  G.crashes += 3;
+  const loss = Math.min(save.coins, 10);
+  save.coins -= loss; persist();
+  G.floats.push({ x: cx, y: cy - 20, text: '💥 KABOOM!', life: 1.4, max: 1.4, color: '#ffe14d', size: 22 });
+  toast(`💥 CRASH! ${gone} passengers went home`, 2.2, true);
+  lotChanged();
+  refreshHUD();
 }
 
 function onCrash(v, b) {
@@ -823,6 +986,25 @@ function onCrash(v, b) {
   G.floats.push({ x: cx, y: cy - 8, text: pick(['Honk!', 'Beep!', 'Oops!', 'Bonk!']), life: 0.8, max: 0.8, color: '#ffffff', size: 13 });
   sfx.honk(); buzz(30);
   G.shake = 0.22;
+}
+
+// Round off each corner of a path with a short curve so vehicles follow the curved track.
+function smoothCorners(pts, r) {
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i - 1], [cx, cy] = pts[i], [nx, ny] = pts[i + 1];
+    const d1 = Math.hypot(cx - px, cy - py), d2 = Math.hypot(nx - cx, ny - cy);
+    const r1 = Math.min(r, d1 / 2), r2 = Math.min(r, d2 / 2);
+    if (r1 < 1 || r2 < 1) { out.push(pts[i]); continue; }
+    const ax = cx - (cx - px) / d1 * r1, ay = cy - (cy - py) / d1 * r1;
+    const bx = cx + (nx - cx) / d2 * r2, by = cy + (ny - cy) / d2 * r2;
+    for (let k = 0; k <= 5; k++) {
+      const t = k / 5, u = 1 - t;
+      out.push([u * u * ax + 2 * u * t * cx + t * t * bx, u * u * ay + 2 * u * t * cy + t * t * by, pts[i][2]]);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
 }
 
 function ringPath(v, i) {
@@ -857,7 +1039,8 @@ function ringPath(v, i) {
     corners.map(([s, p]) => [(sE - s + P) % P, p]).filter(([d]) => d > 0.5 && d < ccw).sort((a, b) => a[0] - b[0]).forEach(([, p]) => pts.push(p));
   }
   pts.push(Tp, [bx, by]);
-  return pts;
+  v.pathBx = bx;
+  return smoothCorners([[v.x, v.y]].concat(pts), 14).slice(1);
 }
 
 function depart(v) {
@@ -872,6 +1055,11 @@ function depart(v) {
     v.path = [[bx, RING.y, 1], [cx, RING.y], [cx, ry], [cx + dir * 320, ry], [cx + dir * 760, ry - 300]];
     v.runway = { x0: cx };
     v.maxSpeed = 230;
+  } else if (G.T.key === 'train') {
+    // back out of the platform, round the curve and away down the line into the tunnel
+    const ex = bx >= LW / 2 ? view.x1 + 140 : view.x0 - 140;
+    v.path = smoothCorners([[bx, BAY_CY, 1], [bx, RING.y, 1], [ex, RING.y, 1]], 14).slice(1);
+    v.maxSpeed = 420;
   } else {
     const ex = bx >= LW / 2 ? view.x1 + 90 : view.x0 - 90;
     v.path = [[bx, RING.y, 1], [ex, RING.y]];
@@ -918,39 +1106,43 @@ function tryBoard() {
   const open = G.bays.filter((v) => v && v.state === 'bay' && v.filled + v.incoming < v.cap)
     .sort((a, b) => (b.filled + b.incoming) - (a.filled + a.incoming));
   for (const v of open) {
+    // whoever of that colour will reach the exit gap first
     let bi = -1, bd = 1e9;
     G.pods.forEach((p, i) => {
-      if (p && !p.entering && p.c === v.color) {
-        const d = Math.hypot(p.x - v.x, p.y - v.y);
+      if (p && !p.entering && !p.leaving && p.c === v.color) {
+        const d = (ring.exitS - podS(i) + ring.P) % ring.P;
         if (d < bd) { bd = d; bi = i; }
       }
     });
     if (bi >= 0) {
-      const p = G.pods[bi];
-      G.pods[bi] = null;
+      G.pods[bi].leaving = v;
       v.incoming++;
-      G.walkers.push({ p, v, sx: p.x, sy: p.y });
       G.boardT = G.partyT > 0 ? 0.04 : 0.08;
       return;
     }
   }
 }
 
-// the next person in line steps onto the nearest empty carousel spot
+function waitingCount() { return G.lines[0].length + G.lines[1].length; }
+
+// The two feeder lines take turns sending their front person into the nearest gap in the circle.
 function refill() {
-  if (!G.waiting.length) return;
-  const [ex, ey] = queueSlots[0];
+  let li = G.nextLine;
+  if (!G.lines[li].length) li = 1 - li;
+  if (!G.lines[li].length) return;
+  // the empty spot that is next to arrive at this side's entrance
   let bi = -1, bd = 1e9;
   for (let i = 0; i < G.pods.length; i++) {
     if (G.pods[i]) continue;
-    const [x, y] = podPos(i);
-    const d = Math.hypot(x - ex, y - ey);
+    const d = (ring.gateS[li] - podS(i) + ring.P) % ring.P;
     if (d < bd) { bd = d; bi = i; }
   }
   if (bi < 0) return;
-  const p = G.waiting.shift();
+  const p = G.lines[li].shift();
   p.entering = true;
+  p.via = [gateOut(li)];
   G.pods[bi] = p;
+  G.nextLine = 1 - li;
   G.refillT = G.partyT > 0 ? 0.04 : 0.07;
 }
 
@@ -976,17 +1168,17 @@ function useBooster(kind) {
     sparkles(bx, by, '#ffffff', 14);
     toast('🅿️ Extra bay!');
   } else if (kind === 'sort') {
-    if (G.waiting.length < 3) { toast('Nobody waiting in line!'); return; }
-    const n = Math.min(24, G.waiting.length);
-    const head = G.waiting.slice(0, n);
+    if (waitingCount() < 3) { toast('Nobody waiting in line!'); return; }
     // prefer colours already waiting in a bay, then order of appearance
     const order = [];
     for (const v of G.bays) if (v && v.filled + v.incoming < v.cap && !order.includes(v.color)) order.push(v.color);
-    head.forEach((p) => { if (!order.includes(p.c)) order.push(p.c); });
-    head.sort((a, b) => order.indexOf(a.c) - order.indexOf(b.c));
-    G.waiting.splice(0, n, ...head);
-    G.waiting.forEach((p, i) => {
-      if (i < n) { const s = queueSlots[Math.min(i, queueSlots.length - 1)]; p.x = s[0]; p.y = s[1]; sparkles(p.x, p.y, '#ffffff', 1); }
+    G.lines.forEach((line, li) => {
+      const n = Math.min(12, line.length);
+      const head = line.slice(0, n);
+      head.forEach((p) => { if (!order.includes(p.c)) order.push(p.c); });
+      head.sort((a, b) => order.indexOf(a.c) - order.indexOf(b.c));
+      line.splice(0, n, ...head);
+      head.forEach((p, i) => { const sl = feeders[li].slots[Math.min(i, feeders[li].slots.length - 1)]; p.x = sl[0]; p.y = sl[1]; sparkles(p.x, p.y, '#ffffff', 1); });
     });
     pay('sort'); sfx.sort();
     toast('✨ Line sorted!');
@@ -1034,6 +1226,18 @@ function updateVehicle(v, dt) {
       if (b.t >= b.d1 + 0.24) { v.x = b.ox; v.y = b.oy; v.state = 'lot'; v.bump = null; }
       break;
     }
+    case 'runaway': {
+      const r = v.run;
+      r.t += dt;
+      const f = Math.min(1, (r.t / r.T) * (r.t / r.T));
+      v.x = r.ox + Math.cos(v.ang) * r.d * f; v.y = r.oy + Math.sin(v.ang) * r.d * f;
+      if (Math.random() < dt * 30) G.parts.push({ type: 'puff', x: v.x, y: v.y, vx: rand(-10, 10), vy: rand(-25, -10), life: 0.6, max: 0.6, size: 3, grow: 8, color: 'rgba(80,80,90,0.5)' });
+      if (f >= 1) {
+        if (r.target.state === 'lot' || r.target.state === 'bump') explode(v, r.target);
+        else { v.state = 'lot'; v.run = null; lotChanged(); } // its target drove off: it just rolls to a stop
+      }
+      break;
+    }
     case 'emerging': {
       v.emT += dt;
       const t = easeOut(Math.min(1, v.emT / 0.6));
@@ -1045,8 +1249,13 @@ function updateVehicle(v, dt) {
       v.speed = Math.min(v.maxSpeed, v.speed + dt * 1500);
       const n = v.path.length;
       const [bx, by] = bayPos(v.bay);
-      v.path[n - 1] = [bx, by];
-      if (!v.lift && n >= 2 && v.pi <= n - 2) v.path[n - 2] = [bx, RING.y];
+      if (v.lift) v.path[n - 1] = [bx, by];
+      else if (v.pathBx !== bx) {
+        // the bays moved (extra bay): slide the end of the route across
+        const dx = bx - v.pathBx;
+        for (let k = Math.max(v.pi, n - 8); k < n; k++) v.path[k] = [v.path[k][0] + dx, v.path[k][1], v.path[k][2]];
+        v.pathBx = bx;
+      }
       if (v.pi >= n - 1) v.speed = Math.min(v.speed, Math.max(70, Math.hypot(bx - v.x, by - v.y) * 7)); // ease into the bay
       if (followPath(v, dt)) { v.state = 'bay'; v.lift = false; v.parkT = 0.35; }
       trail(v, dt);
@@ -1133,6 +1342,18 @@ function update(dt) {
     g.cool = 0.4; g.doorT = 0.8;
     if (G.time > 1) sfx.go();
   }
+  // wrecks burn out and get cleared away
+  for (let i = G.wrecks.length - 1; i >= 0; i--) {
+    const w = G.wrecks[i];
+    w.t -= dt;
+    if (Math.random() < dt * 10) G.parts.push({ type: 'puff', x: w.x + rand(-8, 8), y: w.y + rand(-6, 6), vx: rand(-6, 6), vy: rand(-30, -15), life: 1.2, max: 1.2, size: 4, grow: 12, color: 'rgba(70,60,80,0.45)' });
+    if (w.t <= 0) {
+      G.wrecks.splice(i, 1);
+      sparkles(w.x, w.y, '#ffffff', 10);
+      lotChanged();
+    }
+  }
+  if (G.flash > 0) G.flash = Math.max(0, G.flash - dt);
   // asteroids drift across the launch field, out the other side, and come back somewhere new
   for (const a of G.asteroids) {
     if (a.wobble > 0) a.wobble = Math.max(0, a.wobble - dt * 2.4);
@@ -1148,9 +1369,10 @@ function update(dt) {
     }
   }
 
-  // carousel spins; riders stick to their spot, newcomers walk on
+  // people walk round the holding circle; newcomers step in from the feeder lines
   const partying = G.partyT > 0;
-  G.rot = (G.rot + dt * (partying ? 80 : 34)) % ring.P;
+  const step = dt * (partying ? 110 : 52);
+  G.rot = (G.rot + step) % ring.P;
   const esp = 340 * dt;
   for (let i = 0; i < G.pods.length; i++) {
     const p = G.pods[i];
@@ -1158,20 +1380,34 @@ function update(dt) {
     const [x, y] = podPos(i);
     p.walk += dt;
     if (p.entering) {
-      const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy);
-      if (d <= esp + 1) { p.entering = false; p.x = x; p.y = y; }
-      else { p.x += dx / d * esp; p.y += dy / d * esp; }
-    } else { p.x = x; p.y = y; }
+      const [tx, ty] = p.via && p.via.length ? p.via[0] : [x, y];
+      const dx = tx - p.x, dy = ty - p.y, d = Math.hypot(dx, dy);
+      if (d <= esp + 1) {
+        p.x = tx; p.y = ty;
+        if (p.via && p.via.length) p.via.shift(); else p.entering = false;
+      } else { p.x += dx / d * esp; p.y += dy / d * esp; }
+    } else {
+      p.x = x; p.y = y;
+      // reached the exit gap: step out and head down to the vehicle
+      const ahead = (ring.exitS - podS(i) + ring.P) % ring.P;
+      if (p.leaving && (ahead <= step + 1 || ahead > ring.P - 3)) {
+        G.pods[i] = null;
+        G.walkers.push({ p, v: p.leaving, via: [ring.exitOut.slice()] });
+        p.leaving = null;
+      }
+    }
   }
-  const last = queueSlots.length - 1;
   const qsp = (partying ? 440 : 270) * dt;
-  for (let i = 0; i < G.waiting.length; i++) {
-    const p = G.waiting[i];
-    const s = queueSlots[Math.min(i, last)];
-    const dx = s[0] - p.x, dy = s[1] - p.y, d = Math.hypot(dx, dy);
-    if (d <= qsp) { p.x = s[0]; p.y = s[1]; p.moving = false; }
-    else { p.x += dx / d * qsp; p.y += dy / d * qsp; p.moving = true; p.walk += dt; }
-  }
+  G.lines.forEach((line, li) => {
+    const slots = feeders[li].slots, last = slots.length - 1;
+    for (let i = 0; i < line.length; i++) {
+      const p = line[i];
+      const s = slots[Math.min(i, last)];
+      const dx = s[0] - p.x, dy = s[1] - p.y, d = Math.hypot(dx, dy);
+      if (d <= qsp) { p.x = s[0]; p.y = s[1]; p.moving = false; }
+      else { p.x += dx / d * qsp; p.y += dy / d * qsp; p.moving = true; p.walk += dt; }
+    }
+  });
   G.refillT -= dt;
   if (G.refillT <= 0) refill();
 
@@ -1184,8 +1420,15 @@ function update(dt) {
   const wsp = (G.partyT > 0 ? 760 : 430) * dt;
   for (let i = G.walkers.length - 1; i >= 0; i--) {
     const w = G.walkers[i], p = w.p, v = w.v;
-    const dx = v.x - p.x, dy = v.y - p.y, dist = Math.hypot(dx, dy);
     p.walk += dt;
+    if (w.via && w.via.length) {
+      const [tx, ty] = w.via[0];
+      const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy);
+      if (dd <= wsp) { p.x = tx; p.y = ty; w.via.shift(); w.sx = p.x; w.sy = p.y; w.D = 0; }
+      else { p.x += ddx / dd * wsp; p.y += ddy / dd * wsp; }
+      continue;
+    }
+    const dx = v.x - p.x, dy = v.y - p.y, dist = Math.hypot(dx, dy);
     if (dist <= wsp + 3) {
       G.walkers.splice(i, 1);
       v.incoming--; v.filled++; v.pulse = 1;
@@ -1200,7 +1443,7 @@ function update(dt) {
   }
 
   if (G.state === 'play') {
-    if (!G.waiting.length && !G.walkers.length && G.pods.every((p) => !p)) {
+    if (!waitingCount() && !G.walkers.length && G.pods.every((p) => !p)) {
       G.state = 'won'; G.endT = 1.3; G.liftMode = false;
       sfx.win(); buzz([30, 50, 30]);
       for (let i = 0; i < 80; i++) confetti(rand(0, LW), rand(view.y0, 100), true);
@@ -1246,7 +1489,7 @@ function update(dt) {
 function checkLose(dt) {
   const riders = G.pods.filter(Boolean);
   const busy = G.walkers.length || G.bays.some((b) => !b) || riders.some((p) => p.entering) ||
-    (G.waiting.length && riders.length < G.pods.length) || !riders.length;
+    (waitingCount() && riders.length < G.pods.length) || !riders.length || riders.some((p) => p.leaving);
   if (busy) { G.loseT = 0; return; }
   for (const v of G.bays) {
     if (v.state !== 'bay' && v.state !== 'moving') { G.loseT = 0; return; }
@@ -1277,6 +1520,57 @@ function rebuildBg() {
   bgCanvas.width = canvas.width; bgCanvas.height = canvas.height;
   paintBg(bgCtx, G ? G.T.key : 'bus');
   bgDirty = false;
+}
+
+// Sleepers and two rails along any polyline (used for curves and angled lines).
+function railPath(g, pts) {
+  const segs = [];
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+    const L = Math.hypot(bx - ax, by - ay);
+    if (L > 0.01) segs.push({ ax, ay, bx, by, L, nx: -(by - ay) / L, ny: (bx - ax) / L });
+  }
+  g.strokeStyle = '#7a5a3a'; g.lineWidth = 2.6; g.lineCap = 'butt';
+  let carry = 0;
+  for (const sg of segs) {
+    for (let t = carry; t < sg.L; t += 7) {
+      const x = sg.ax + (sg.bx - sg.ax) * t / sg.L, y = sg.ay + (sg.by - sg.ay) * t / sg.L;
+      g.beginPath(); g.moveTo(x - sg.nx * 7, y - sg.ny * 7); g.lineTo(x + sg.nx * 7, y + sg.ny * 7); g.stroke();
+      carry = t + 7 - sg.L;
+    }
+  }
+  g.strokeStyle = '#5d6270'; g.lineWidth = 1.8; g.lineJoin = 'round';
+  for (const side of [-4.4, 4.4]) {
+    g.beginPath();
+    segs.forEach((sg, i) => {
+      if (!i) g.moveTo(sg.ax + sg.nx * side, sg.ay + sg.ny * side);
+      g.lineTo(sg.bx + sg.nx * side, sg.by + sg.ny * side);
+    });
+    g.stroke();
+  }
+}
+function curvePts(ax, ay, cx, cy, bx, by) {
+  const out = [];
+  for (let k = 0; k <= 8; k++) { const t = k / 8, u = 1 - t; out.push([u * u * ax + 2 * u * t * cx + t * t * bx, u * u * ay + 2 * u * t * cy + t * t * by]); }
+  return out;
+}
+
+// Yard tracks: all sleepers first, then all rails, so crossings look right.
+function drawYardTracks(g, tracks) {
+  g.save();
+  g.beginPath(); g.rect(RING.x, RING.y, RING.w, RING.h); g.clip();
+  for (const pass of [0, 1]) {
+    for (const t of tracks) {
+      g.save(); g.translate(t.x, t.y); g.rotate(t.ang);
+      if (pass === 0) { g.fillStyle = '#7a5a3a'; for (let x = -600; x < 600; x += 7) g.fillRect(x, -7, 3, 14); }
+      else {
+        g.fillStyle = '#5d6270'; g.fillRect(-600, -5.3, 1200, 1.8); g.fillRect(-600, 3.5, 1200, 1.8);
+        g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(-600, -5.3, 1200, 0.6); g.fillRect(-600, 3.5, 1200, 0.6);
+      }
+      g.restore();
+    }
+  }
+  g.restore();
 }
 
 function railH(g, x1, x2, y) {
@@ -1449,8 +1743,11 @@ function paintBg(g, th) {
     g.fillStyle = '#c8bba4'; rr(g, LOT.x, LOT.y, LOT.w, LOT.h, 8); g.fill();
     g.fillStyle = 'rgba(120,100,80,0.18)';
     for (let i = 0; i < 260; i++) { circ(g, LOT.x + rng() * LOT.w, LOT.y + rng() * LOT.h, 1.2); g.fill(); }
-    for (const ty of (G && G.tracks) || []) railH(g, LOT.x - 14, LOT.x + LOT.w + 14, ty);
+    drawYardTracks(g, (G && G.tracks) || []);
     railH(g, RING.x + 12, RING.x + RING.w - 12, RING.y);
+    // the main line runs off both sides of the screen (into tunnels)
+    railH(g, X0 - 10, RING.x + 12, RING.y);
+    railH(g, RING.x + RING.w - 12, X0 + W + 10, RING.y);
     railH(g, RING.x + 12, RING.x + RING.w - 12, RING.y + RING.h);
     railV(g, RING.x, RING.y + 12, RING.y + RING.h - 12);
     railV(g, RING.x + RING.w, RING.y + 12, RING.y + RING.h - 12);
@@ -1498,73 +1795,115 @@ function paintBg(g, th) {
   drawQueueArea(g, th);
 }
 
-const CAROUSEL = {
-  bus:   { track: '#ff8cc6', edge: '#d94a92', island: '#ffd23f', dots: '#ff5fa2' },
-  boat:  { track: '#c98a4c', edge: '#8a5526', island: '#38c8f4', dots: '#ffffff' },
-  plane: { track: '#5b7cff', edge: '#2a45c9', island: '#eaf0ff', dots: '#9fc2ff' },
-  train: { track: '#ff9f5a', edge: '#c45f1d', island: '#fff0d4', dots: '#ffb27a' },
-  space: { track: '#7c5cff', edge: '#4a33c9', island: '#1d1748', dots: '#ffffff' },
+const CIRCLE = {
+  bus:   { path: '#f6cf98', edge: '#dea25c', island: '#8fdc5e', rope: '#ff5fa2' },
+  boat:  { path: '#d99a5b', edge: '#8a5526', island: '#38c8f4', rope: '#8b5a2b' },
+  plane: { path: '#d6def2', edge: '#9aa8cc', island: '#b9ecff', rope: '#3d6bff' },
+  train: { path: '#ead6ae', edge: '#c4a77a', island: '#a6e07a', rope: '#c45f1d' },
+  space: { path: '#4b3fa6', edge: '#7c5cff', island: '#1d1748', rope: '#8f7dff' },
 };
 
+function walkway(g, pts, C, w) {
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+  g.lineWidth = w + 4; g.strokeStyle = C.edge; g.stroke();
+}
+function walkwayFill(g, pts, C, w) {
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+  g.lineWidth = w; g.strokeStyle = C.path; g.stroke();
+}
+function chevron(g, x, y, ang, col) {
+  g.save(); g.translate(x, y); g.rotate(ang);
+  g.strokeStyle = col; g.lineWidth = 2.4; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(-3, -4); g.lineTo(2, 0); g.lineTo(-3, 4); g.stroke();
+  g.restore();
+}
+
 function drawQueueArea(g, th) {
-  const R = ring, C = CAROUSEL[th];
-  rr(g, R.x, R.y + 3, R.w, R.h, R.r); g.lineWidth = 31; g.strokeStyle = 'rgba(0,0,0,0.13)'; g.stroke();
+  const R = ring, C = CIRCLE[th];
+  // paths: each feeder line into its entrance, and the exit down to the bays
+  const paths = [0, 1].map((li) => {
+    const F = feeders[li], [gx, gy] = ringPoint(R.gateS[li]), [ox, oy] = gateOut(li);
+    return [[F.xin, F.y0], [ox, oy], [gx, gy]];
+  });
+  const exitPath = [R.exitPt, R.exitOut];
+  for (const pth of paths) walkway(g, pth, C, 18);
+  walkway(g, exitPath, C, 18);
+  // the walkway people circle round
+  rr(g, R.x, R.y + 2, R.w, R.h, R.r); g.lineWidth = 30; g.strokeStyle = 'rgba(0,0,0,0.1)'; g.stroke();
   rr(g, R.x, R.y, R.w, R.h, R.r);
-  g.lineWidth = 31; g.strokeStyle = C.edge; g.stroke();
-  g.lineWidth = 26; g.strokeStyle = C.track; g.stroke();
-  // centre island with a merry-go-round on top
+  g.lineWidth = 30; g.strokeStyle = C.edge; g.stroke();
+  g.lineWidth = 26; g.strokeStyle = C.path; g.stroke();
+  // open the walkway edge where the paths join, and mark which way people go
+  for (const pth of paths) walkwayFill(g, pth, C, 18);
+  walkwayFill(g, exitPath, C, 18);
+  const arrowCol = th === 'space' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.25)';
+  paths.forEach((pth) => {
+    const [[ax, ay], [bx, by]] = pth;
+    chevron(g, (ax + bx) / 2, (ay + by) / 2, Math.atan2(by - ay, bx - ax), arrowCol);
+  });
+  chevron(g, R.exitOut[0], (R.exitPt[1] + R.exitOut[1]) / 2 + 2, PI / 2, arrowCol);
+  // centre: a little fountain garden (a glowing beacon in space)
   const ix = R.x + 16, iy = R.y + 16, iw = R.w - 32, ih = R.h - 32;
+  const cx = R.x + R.w / 2, cy = R.cy;
   if (ih > 6 && iw > 6) {
     g.fillStyle = C.island; rr(g, ix, iy, iw, ih, ih / 2); g.fill();
-    g.save(); rr(g, ix, iy, iw, ih, ih / 2); g.clip();
-    g.fillStyle = C.dots; g.globalAlpha = 0.35;
-    for (let x = ix + 6; x < ix + iw; x += 12) for (let y = iy + 5; y < iy + ih; y += 10) { circ(g, x + ((y / 10) % 2) * 6, y, 1.8); g.fill(); }
-    g.restore();
-    g.font = `${Math.min(30, ih * 0.66)}px ui-rounded, system-ui, sans-serif`;
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText(th === 'space' ? '🪐' : '🎠', R.x + R.w / 2, R.cy + 1);
+    const fr = Math.min(ih, iw) / 2 - 5;
+    if (th === 'space') {
+      const gl = g.createRadialGradient(cx, cy, 0, cx, cy, fr + 4);
+      gl.addColorStop(0, 'rgba(110,243,255,0.95)'); gl.addColorStop(0.45, 'rgba(124,92,255,0.6)'); gl.addColorStop(1, 'rgba(124,92,255,0)');
+      g.fillStyle = gl; circ(g, cx, cy, fr + 4); g.fill();
+    } else if (fr > 4) {
+      g.fillStyle = '#e8e4dc'; circ(g, cx, cy, fr); g.fill();
+      g.strokeStyle = '#c9c2b4'; g.lineWidth = 2; g.stroke();
+      g.fillStyle = '#6fd2ff'; circ(g, cx, cy, fr - 4); g.fill();
+      g.fillStyle = '#e8e4dc'; circ(g, cx, cy, Math.max(2, fr * 0.28)); g.fill();
+      if (th !== 'boat') {
+        g.fillStyle = '#ff8fc8';
+        for (let k = 0; k < 8; k++) { const a = k / 8 * TAU; circ(g, cx + Math.cos(a) * (fr + 6), cy + Math.sin(a) * (fr + 6), 2.2); g.fill(); }
+      }
+    }
   }
-  // waiting line: a roped-off zig-zag
-  const Lb = lane;
-  const x1 = Lb.xs - 12, x2 = Lb.xe + 12;
-  const yb = Lb.y0 + Lb.rowH / 2 + 1, yt = Lb.y0 - (Lb.rows - 1) * Lb.rowH - Lb.rowH / 2 - 1;
-  g.fillStyle = th === 'space' ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)';
-  rr(g, x1, yt, x2 - x1, yb - yt, 12); g.fill();
+  // two roped feeder lines
   g.lineCap = 'round';
-  const rope = (a, y, b) => {
-    g.strokeStyle = C.edge; g.lineWidth = 2;
-    g.beginPath(); g.moveTo(a, y); g.lineTo(b, y); g.stroke();
-    g.fillStyle = C.edge; circ(g, a, y, 2.6); g.fill(); circ(g, b, y, 2.6); g.fill();
-  };
-  for (let k = 0; k < Lb.rows - 1; k++) {
-    const y = Lb.y0 - k * Lb.rowH - Lb.rowH / 2;
-    if (k % 2 === 0) rope(x1 + 3, y, x2 - 18); else rope(x1 + 18, y, x2 - 3);
+  for (const F of feeders) {
+    const a = Math.min(F.xin, F.xout) - 10, b = Math.max(F.xin, F.xout) + 10;
+    const yb = F.y0 + F.rowH / 2 + 1, yt = F.y0 - (F.rows - 1) * F.rowH - F.rowH / 2 - 1;
+    g.fillStyle = th === 'space' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.35)';
+    rr(g, a, yt, b - a, yb - yt, 10); g.fill();
+    const inLeft = F.xin < F.xout;
+    for (let k = 0; k < F.rows - 1; k++) {
+      const y = F.y0 - k * F.rowH - F.rowH / 2;
+      // the gap is at the end where the line turns
+      const turnAtOuter = k % 2 === 0;
+      let x1 = a + 3, x2 = b - 3;
+      if (turnAtOuter === inLeft) x2 = b - 16; else x1 = a + 16;
+      g.strokeStyle = C.rope; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(x1, y); g.lineTo(x2, y); g.stroke();
+      g.fillStyle = C.rope; circ(g, x1, y, 2.5); g.fill(); circ(g, x2, y, 2.5); g.fill();
+    }
+    g.setLineDash([4, 4]); g.strokeStyle = C.rope; g.lineWidth = 1.5;
+    rr(g, a, yt, b - a, yb - yt, 10); g.stroke(); g.setLineDash([]);
   }
-  g.setLineDash([4, 4]); g.strokeStyle = C.edge; g.lineWidth = 1.5;
-  rr(g, x1, yt, x2 - x1, yb - yt, 12); g.stroke(); g.setLineDash([]);
 }
 
 function drawCarouselFx() {
-  const R = ring, C = CAROUSEL[G.T.key];
-  // direction chevrons drift with the carousel
+  const R = ring;
+  // little arrows on the walkway show which way everyone is walking
   rr(ctx, R.x, R.y, R.w, R.h, R.r);
-  ctx.setLineDash([3, 13]); ctx.lineDashOffset = -G.rot;
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.setLineDash([2, 16]); ctx.lineDashOffset = -G.rot;
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
   ctx.stroke();
   ctx.setLineDash([]); ctx.lineDashOffset = 0;
-  // fairground bulbs round the inner and outer edge
-  const party = G.partyT > 0;
-  const n = Math.round(R.P / 18);
-  for (let k = 0; k < n; k++) {
-    const s = k * R.P / n;
-    const [x, y] = ringPoint(s);
-    const [x2, y2] = ringPoint(s + 1);
-    const nx = -(y2 - y), ny = x2 - x, nl = Math.hypot(nx, ny) || 1;
-    const on = ((k + Math.floor(G.time * (party ? 10 : 3))) % 3) === 0;
-    for (const side of [-15.5, 15.5]) {
-      const bx = x + nx / nl * side, by = y + ny / nl * side;
-      ctx.fillStyle = on ? (party ? RAINBOW[(k + Math.floor(G.time * 8)) % RAINBOW.length] : '#fff7b0') : 'rgba(255,255,255,0.45)';
-      circ(ctx, bx, by, on ? 2.1 : 1.5); ctx.fill();
+  // fountain spray
+  if (G.T.key !== 'space' && R.h - 32 > 14) {
+    const cx = R.x + R.w / 2, cy = R.cy;
+    for (let k = 0; k < 6; k++) {
+      const t = (G.time * 1.4 + k / 6) % 1, a = k / 6 * TAU + G.time * 0.5;
+      const d = t * Math.min(R.h - 32, R.w - 32) * 0.28;
+      ctx.fillStyle = `rgba(255,255,255,${0.85 * (1 - t)})`;
+      circ(ctx, cx + Math.cos(a) * d, cy + Math.sin(a) * d - Math.sin(t * PI) * 4, 1.6); ctx.fill();
     }
   }
 }
@@ -1602,9 +1941,9 @@ function drawLiveBg() {
       ctx.fillStyle = '#efe9df'; ctx.fillRect(bx - bw / 2 - 5, 0, 10, 80);
       ctx.fillStyle = '#ffd23f'; ctx.fillRect(bx - bw / 2 - 5, 0, 1.5, 80); ctx.fillRect(bx - bw / 2 + 3.5, 0, 1.5, 80);
       if (i === n - 1) { ctx.fillStyle = '#efe9df'; ctx.fillRect(bx + bw / 2 - 5, 0, 10, 80); }
-      ctx.fillStyle = '#7a5a3a';
-      for (let y = 6; y < 84; y += 7) ctx.fillRect(bx - 7, y, 14, 2.5);
-      ctx.fillStyle = '#5d6270'; ctx.fillRect(bx - 5.3, 6, 1.8, 78); ctx.fillRect(bx + 3.5, 6, 1.8, 78);
+      railPath(ctx, [[bx, 6], [bx, RING.y - 14]]);
+      railPath(ctx, curvePts(bx, RING.y - 14, bx, RING.y, bx - 14, RING.y));
+      railPath(ctx, curvePts(bx, RING.y - 14, bx, RING.y, bx + 14, RING.y));
       ctx.fillStyle = '#ff4d6d'; rr(ctx, bx - 8, 1, 16, 5, 2); ctx.fill();
     } else {
       ctx.save();
@@ -1643,34 +1982,29 @@ function drawPerson(x, y, c, skin, hair, bob, scale) {
 function drawQueue() {
   drawCarouselFx();
   const party = G.partyT > 0;
-  // waiting line (back to front so the front is on top)
-  const n = Math.min(G.waiting.length, queueSlots.length);
-  for (let i = n - 1; i >= 0; i--) {
-    const p = G.waiting[i];
-    let bob = p.moving ? Math.sin(p.walk * 18) * 1.2 : 0;
-    if (party) bob = Math.sin(G.time * 14 + i * 0.7) * 1.6;
-    drawPerson(p.x, p.y, p.c, p.skin, p.hair, bob, 1);
-  }
-  const hidden = G.waiting.length - n;
-  if (hidden > 0) {
-    const [x, y] = queueSlots[queueSlots.length - 1];
-    ctx.fillStyle = '#ffffff'; rr(ctx, x - 17, y - 10, 34, 20, 10); ctx.fill();
-    ctx.fillStyle = '#7b4dff'; ctx.font = '900 11px ui-rounded, system-ui, sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('+' + hidden, x, y + 0.5);
-  }
-  // carousel riders, drawn top-to-bottom so nearer ones overlap correctly
-  const riders = [];
-  for (let i = 0; i < G.pods.length; i++) {
-    const p = G.pods[i];
-    const [x, y] = podPos(i);
-    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.beginPath(); ctx.ellipse(x, y + 4, 8.5, 4.5, 0, 0, TAU); ctx.fill();
-    ctx.strokeStyle = CAROUSEL[G.T.key].edge; ctx.lineWidth = 1.2; ctx.stroke();
-    if (p) riders.push(p);
-  }
-  riders.sort((a, b) => a.y - b.y);
-  for (const p of riders) {
-    const bob = p.entering ? Math.sin(p.walk * 18) * 1.2 : Math.sin(G.time * (party ? 14 : 5) + p.walk) * (party ? 1.8 : 0.8);
+  // the two feeder lines (back to front so the front is on top)
+  G.lines.forEach((line, li) => {
+    const slots = feeders[li].slots;
+    const n = Math.min(line.length, slots.length);
+    for (let i = n - 1; i >= 0; i--) {
+      const p = line[i];
+      let bob = p.moving ? Math.sin(p.walk * 18) * 1.2 : 0;
+      if (party) bob = Math.sin(G.time * 14 + i * 0.7) * 1.6;
+      drawPerson(p.x, p.y, p.c, p.skin, p.hair, bob, 1);
+    }
+    const hidden = line.length - n;
+    if (hidden > 0) {
+      const [x, y] = slots[slots.length - 1];
+      ctx.fillStyle = '#ffffff'; rr(ctx, x - 16, y - 9, 32, 18, 9); ctx.fill();
+      ctx.fillStyle = '#7b4dff'; ctx.font = '900 11px ui-rounded, system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('+' + hidden, x, y + 0.5);
+    }
+  });
+  // people walking round the holding circle, drawn top-to-bottom so nearer ones overlap
+  const walkers = G.pods.filter(Boolean).sort((a, b) => a.y - b.y);
+  for (const p of walkers) {
+    const bob = Math.sin(p.walk * (party ? 22 : 13)) * (party ? 1.8 : 1.1);
     drawPerson(p.x, p.y, p.c, p.skin, p.hair, bob, 1);
   }
 }
@@ -1731,7 +2065,8 @@ function planePaths(len, wid) {
 
 function silhouette(v) {
   const k = G.T.key, hl = v.len / 2, hw = v.wid / 2;
-  if (k === 'bus' || k === 'train') rr(ctx, -hl, -hw, v.len, v.wid, 6);
+  if (k === 'bus') rr(ctx, -hl, -hw, v.len, v.wid, 6);
+  else if (k === 'train') rr(ctx, -hl, -hw, v.len, v.wid, 3);
   else if (k === 'boat') hullPath(hl, hw, v.wid * 0.9);
   else if (k === 'space') rocketBody(hl, hw);
   else {
@@ -1772,23 +2107,63 @@ function drawBus(v, col) {
   drawSeats(v, -hl + 6, hl - 14, Math.min(5.6, hw - 5.5), 3.4);
 }
 
+function trainNosePath(x0, x1, hw) {
+  const n = Math.min(9, (x1 - x0) * 0.42);
+  ctx.beginPath();
+  ctx.moveTo(x0 + 2.5, -hw);
+  ctx.lineTo(x1 - n, -hw);
+  ctx.bezierCurveTo(x1 - n * 0.3, -hw, x1, -hw * 0.55, x1, 0);
+  ctx.bezierCurveTo(x1, hw * 0.55, x1 - n * 0.3, hw, x1 - n, hw);
+  ctx.lineTo(x0 + 2.5, hw);
+  ctx.quadraticCurveTo(x0, hw, x0, hw - 2.5);
+  ctx.lineTo(x0, -hw + 2.5);
+  ctx.quadraticCurveTo(x0, -hw, x0 + 2.5, -hw);
+  ctx.closePath();
+}
+
 function drawTrain(v, col) {
   const hl = v.len / 2, hw = v.wid / 2;
-  const cars = v.cap === 4 ? 2 : v.cap === 6 ? 3 : 4, gap = 2.5;
+  const cars = v.cap === 4 ? 2 : v.cap === 6 ? 3 : 4, gap = 2;
   const seg = (v.len - gap * (cars - 1)) / cars;
-  headBeam(hl, 2.5, 6, 22);
+  headBeam(hl, 3, 7, 24);
+  // gangway connectors between the carriages
+  ctx.fillStyle = '#2b2b38';
+  for (let k = 0; k < cars - 1; k++) { const x = -hl + (k + 1) * seg + k * gap; ctx.fillRect(x - 1, -hw + 4, gap + 2, v.wid - 8); }
   for (let k = 0; k < cars; k++) {
-    const x0 = -hl + k * (seg + gap), loco = k === cars - 1;
-    if (k < cars - 1) { ctx.fillStyle = '#3d3d4d'; ctx.fillRect(x0 + seg - 1, -1.5, gap + 2, 3); }
-    ctx.fillStyle = col.dark; rr(ctx, x0, -hw, seg, v.wid, loco ? 7 : 3.5); ctx.fill();
-    ctx.fillStyle = col.main; rr(ctx, x0 + 1, -hw + 1, seg - 2, v.wid - 3, loco ? 6 : 3); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.fillRect(x0 + 2.5, -hw + 2, seg - 5, 1.6);
+    const x0 = -hl + k * (seg + gap), x1 = x0 + seg, loco = k === cars - 1;
+    if (loco) trainNosePath(x0, x1, hw); else rr(ctx, x0, -hw, seg, v.wid, 2.5);
+    ctx.fillStyle = col.dark; ctx.fill();
+    if (loco) trainNosePath(x0 + 0.6, x1 - 0.6, hw - 1.1); else rr(ctx, x0 + 0.6, -hw + 0.6, seg - 1.2, v.wid - 2.6, 2);
+    ctx.fillStyle = col.main; ctx.fill();
+    // roof panel, livery stripes and roof vents
+    ctx.fillStyle = 'rgba(255,255,255,0.22)'; rr(ctx, x0 + 2, -hw * 0.38, seg - (loco ? 12 : 4), hw * 0.76, 1.5); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(x0 + 1.5, -hw + 1.1, seg - (loco ? 8 : 3), 0.8);
+    ctx.fillRect(x0 + 1.5, hw - 2.1, seg - (loco ? 8 : 3), 0.8);
+    if (!loco) { ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(x0 + seg / 2 - 2.5, -1.2, 5, 2.4); }
   }
-  // locomotive cab: dark windscreen, headlamp and a little chimney
-  ctx.fillStyle = '#23305e'; rr(ctx, hl - 9, -hw + 2.5, 4.5, v.wid - 6, 2); ctx.fill();
-  ctx.fillStyle = '#fff36b'; circ(ctx, hl - 1.8, -0.5, 2.1); ctx.fill();
-  ctx.fillStyle = '#2b2b3a'; circ(ctx, hl - 14, -0.5, 2.6); ctx.fill();
-  drawSeats(v, -hl + 3, hl - 18, 3.6, 2.7);
+  // locomotive: yellow warning nose, wrap-around windscreen, headlights and roof fans
+  const lx0 = hl - seg;
+  ctx.save(); trainNosePath(lx0, hl, hw); ctx.clip();
+  ctx.fillStyle = '#ffd23f'; ctx.fillRect(hl - 5.5, -hw, 6, v.wid);
+  ctx.restore();
+  ctx.fillStyle = '#1d2848'; rr(ctx, hl - 10, -hw + 2.4, 4, v.wid - 4.8, 1.5); ctx.fill();
+  ctx.fillStyle = 'rgba(150,215,255,0.85)'; ctx.fillRect(hl - 9.3, -hw + 3.4, 1, v.wid - 6.8);
+  ctx.fillStyle = '#fffbe0'; circ(ctx, hl - 1.6, -hw + 4.2, 1.3); ctx.fill(); circ(ctx, hl - 1.6, hw - 4.2, 1.3); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.32)'; circ(ctx, lx0 + 5, 0, 2.4); ctx.fill(); circ(ctx, lx0 + 10.5, 0, 2.4); ctx.fill();
+  // passenger windows down both sides fill up as people board
+  const x1 = hl - 13, x0 = -hl + 3, per = v.cap / 2, step = (x1 - x0) / per;
+  for (let i = 0; i < v.cap; i++) {
+    const ci = Math.floor(i / 2);
+    const x = x1 - (ci + 0.5) * step, y = i % 2 ? hw - 3.9 : -hw + 3.9;
+    if (i < v.filled) {
+      ctx.fillStyle = seatFill(v, i); rr(ctx, x - 2.4, y - 1.6, 4.8, 3.2, 1); ctx.fill();
+      ctx.fillStyle = '#ffd9b8'; circ(ctx, x, y, 0.95); ctx.fill();
+    } else {
+      ctx.fillStyle = '#c7ecff'; rr(ctx, x - 2.4, y - 1.6, 4.8, 3.2, 1); ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(20,30,60,0.55)'; ctx.lineWidth = 0.7; ctx.stroke();
+  }
 }
 
 function rocketBody(hl, hw) {
@@ -1904,6 +2279,10 @@ function drawVehicle(v) {
     ctx.fillStyle = '#ff3d71'; ctx.font = '900 12px ui-rounded, system-ui, sans-serif';
     ctx.fillText(String(v.lock), v.x + 7, v.y + 1);
   }
+  if (v.wrong >= 2 && (v.state === 'lot' || v.state === 'bump')) {
+    ctx.font = '16px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('⚠️', v.x, v.y - 14 + Math.sin(G.time * 10) * 2);
+  }
   if (v.lift && v.state === 'moving') {
     ctx.strokeStyle = 'rgba(60,60,80,0.8)'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(v.x - 6, v.y - 4); ctx.lineTo(v.x, v.y - 34); ctx.lineTo(v.x + 6, v.y - 4); ctx.stroke();
@@ -1979,8 +2358,44 @@ function drawAsteroid(a) {
   ctx.restore();
 }
 
+function drawTunnels() {
+  for (const side of [-1, 1]) {
+    const x = side < 0 ? view.x0 : view.x1, y = RING.y;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(-side, 1); // the mouth faces into the screen
+    ctx.fillStyle = '#6fbf4f'; ctx.beginPath(); ctx.ellipse(-4, 0, 22, 24, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#8f8a84'; rr(ctx, -2, -15, 12, 30, 5); ctx.fill();
+    ctx.fillStyle = '#a9a39b';
+    for (let k = -12; k < 13; k += 6) ctx.fillRect(7, k, 3, 4);
+    ctx.fillStyle = '#16141c'; rr(ctx, -8, -11, 15, 22, 6); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawWreck(w) {
+  ctx.save();
+  ctx.translate(w.x, w.y);
+  ctx.rotate(w.ang);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; rr(ctx, -w.len / 2 + 2, -w.wid / 2 + 3, w.len, w.wid, 6); ctx.fill();
+  ctx.fillStyle = '#3b3340'; rr(ctx, -w.len / 2, -w.wid / 2, w.len, w.wid, 6); ctx.fill();
+  ctx.fillStyle = '#5a4f60'; rr(ctx, -w.len / 2 + 5, -w.wid / 2 + 3, w.len * 0.4, w.wid * 0.45, 3); ctx.fill();
+  ctx.fillStyle = '#2a2430'; rr(ctx, 2, -2, w.len * 0.35, w.wid * 0.5, 3); ctx.fill();
+  ctx.restore();
+  // flickering flames while it burns
+  const k = clamp(w.t / 3, 0, 1);
+  for (let i = 0; i < 4; i++) {
+    const fx = w.x + Math.cos(i * 1.7) * 9, fy = w.y + Math.sin(i * 2.3) * 5;
+    const h = (7 + Math.sin(G.time * 18 + i * 2) * 3) * k;
+    if (h <= 0.5) continue;
+    ctx.fillStyle = '#ff8c42'; ctx.beginPath(); ctx.ellipse(fx, fy - h * 0.4, h * 0.45, h * 0.8, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#fff3a0'; ctx.beginPath(); ctx.ellipse(fx, fy - h * 0.25, h * 0.22, h * 0.45, 0, 0, TAU); ctx.fill();
+  }
+}
+
 function drawWalker(w) {
   const p = w.p;
+  if (w.via && w.via.length) { drawPerson(p.x, p.y, p.c, p.skin, p.hair, Math.sin(p.walk * 18) * 1.2, 1); return; }
   if (!w.D) w.D = Math.max(1, Math.hypot(w.v.x - w.sx, w.v.y - w.sy));
   const t = clamp(1 - Math.hypot(w.v.x - p.x, w.v.y - p.y) / w.D, 0, 1);
   const hop = Math.abs(Math.sin(t * PI * 2)) * 6;
@@ -2043,7 +2458,7 @@ function drawParty() {
 let lastHint = null;
 function drawTutorial() {
   const on = G.tutorial && G.hint && G.state === 'play' && !G.paused;
-  const msg = on ? (G.taps === 0 ? '👆 Tap a vehicle with a clear path!' : '🎨 Match colours on the carousel!') : '';
+  const msg = on ? (G.taps === 0 ? '👆 Tap a vehicle with a clear path!' : '🎨 Match colours in the circle!') : '';
   if (msg !== lastHint) {
     lastHint = msg;
     const el = $('worldName');
@@ -2072,8 +2487,9 @@ function render() {
   drawQueue();
   for (const v of G.vehicles) if (v.state === 'emerging') drawVehicle(v);
   for (const g of G.garages) drawGarage(g);
-  for (const v of G.vehicles) if (v.state === 'lot' || v.state === 'bump') drawVehicle(v);
+  for (const v of G.vehicles) if (v.state === 'lot' || v.state === 'bump' || v.state === 'runaway') drawVehicle(v);
   for (const a of G.asteroids) if (a.active) drawAsteroid(a);
+  for (const w of G.wrecks) drawWreck(w);
   for (const v of G.vehicles) if (v.state === 'bay' || v.state === 'full') drawVehicle(v);
   for (const v of G.vehicles) if (v.state === 'moving' && !v.lift) drawVehicle(v);
   if (G.liftMode) {
@@ -2082,8 +2498,13 @@ function render() {
   }
   for (const w of G.walkers) drawWalker(w);
   for (const v of G.vehicles) if (v.state === 'leaving') drawVehicle(v);
+  if (G.T.key === 'train') drawTunnels();
   for (const v of G.vehicles) if (v.state === 'moving' && v.lift) drawVehicle(v);
   drawParticles();
+  if (G.flash > 0) {
+    ctx.fillStyle = `rgba(255,236,190,${G.flash * 2.4})`;
+    ctx.fillRect(view.x0, view.y0, view.x1 - view.x0, view.y1 - view.y0);
+  }
   drawTutorial();
   drawParty();
 
@@ -2174,8 +2595,8 @@ function lose() {
   }
   acts.push({ id: 'retry', label: '↻ Try again', cls: 'pink', fn: () => startLevel(n) });
   acts.push({ id: 'menu', label: 'Menu', cls: 'alt', fn: showMenu });
-  showModal(`<div class="m-emoji">😱</div><h2>Traffic Jam!</h2><p>Every bay is full and nobody on the carousel can get on.</p>
-    <div class="tip">💡 Check which colours are riding the carousel before you tap.</div>`, acts);
+  showModal(`<div class="m-emoji">😱</div><h2>Traffic Jam!</h2><p>Every bay is full and nobody in the circle can get on.</p>
+    <div class="tip">💡 Check the circle and the two lines before you tap.</div>`, acts);
 }
 
 function pauseGame() {
@@ -2240,14 +2661,16 @@ $('btnPlay').addEventListener('click', () => {
   startLevel(save.maxLevel);
 });
 $('btnLevels').addEventListener('click', () => { Snd.unlock(); showLevels(); });
-$('btnSound').addEventListener('click', () => { Snd.unlock(); save.sound = !save.sound; persist(); refreshHUD(); });
+$('btnSound').addEventListener('click', () => { save.sound = !save.sound; persist(); if (save.sound) { Snd.unlock(); sfx.coin(); } else Snd.sleep(); refreshHUD(); });
 
 document.addEventListener('touchmove', (e) => {
   if (!e.target.closest || !e.target.closest('.card')) e.preventDefault();
 }, { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
+['touchend', 'click', 'keydown'].forEach((ev) => document.addEventListener(ev, () => Snd.unlock(), { passive: true }));
 document.addEventListener('dblclick', (e) => e.preventDefault());
 document.addEventListener('visibilitychange', () => {
+  if (document.hidden) Snd.sleep();
   if (document.hidden && G && G.state === 'play' && !G.paused && $('modal').classList.contains('hidden')) pauseGame();
 });
 
