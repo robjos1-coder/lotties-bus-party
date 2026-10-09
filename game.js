@@ -1103,6 +1103,12 @@ function startLevel(n) {
   showIntros();
 }
 
+function showBanner() {
+  const b = $('banner');
+  b.innerHTML = `<small>${G.T.emoji} ${G.T.world}</small>Level ${G.level}${G.cfg.party ? ' 🎉' : ''}`;
+  b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
+}
+
 function showIntros() {
   const cfg = G.cfg, T = G.T;
   const pages = [];
@@ -1174,12 +1180,12 @@ function showIntros() {
         <div class="tip">🌈 Fill it up to start an instant <b>PARTY</b> — double coins and super-speedy passengers!</div>`,
     });
   }
-  if (!pages.length) return;
+  if (!pages.length) { showBanner(); return; }
   persist();
   G.paused = true;
   const next = () => {
     const p = pages.shift();
-    if (!p) { G.paused = false; return; }
+    if (!p) { G.paused = false; showBanner(); return; }
     showModal(`<div class="m-emoji">${p.emoji}</div><h2>${p.title}</h2>${p.html}`,
       [{ id: 'ok', label: pages.length ? 'Next ▶' : "Let's go! 🚀", fn: next }]);
   };
@@ -1659,8 +1665,31 @@ function addCoins(n, x, y) {
   persist();
   G.floats.push({ x, y, text: `+${n} 🪙`, life: 1, max: 1, color: '#fff36b', size: n > 5 ? 18 : 14 });
   sfx.coin();
-  const pill = $('coins'); pill.classList.remove('bump'); void pill.offsetWidth; pill.classList.add('bump');
-  $('coinTxt').textContent = save.coins;
+  flyCoins(Math.min(4, n), x, y);
+}
+// little coins arc from where they were earned up into the coin counter, which ticks up as they land
+function flyCoins(k, x, y) {
+  const pill = $('coins').getBoundingClientRect();
+  const tx = pill.left + 18, ty = pill.top + pill.height / 2;
+  const sx = view.ox + x * view.scale, sy = view.oy + y * view.scale;
+  for (let i = 0; i < k; i++) {
+    const el = document.createElement('div');
+    el.className = 'flycoin'; el.textContent = '🪙';
+    el.style.left = (sx + rand(-10, 10)) + 'px'; el.style.top = (sy + rand(-8, 8)) + 'px';
+    document.body.appendChild(el);
+    setTimeout(() => {
+      el.style.transform = `translate(${tx - sx}px, ${ty - sy}px) scale(0.6)`;
+      el.style.opacity = '0.4';
+    }, 30 + i * 70);
+    setTimeout(() => {
+      el.remove();
+      if (i === k - 1) {
+        const pc = $('coins'); pc.classList.remove('bump'); void pc.offsetWidth; pc.classList.add('bump');
+        $('coinTxt').textContent = save.coins;
+      }
+    }, 680 + i * 70);
+  }
+  if (!k) $('coinTxt').textContent = save.coins;
 }
 
 function tryBoard() {
@@ -1832,14 +1861,14 @@ function updateVehicle(v, dt) {
       if (v.spine && !v.lift) {
         const tgt = v.path[n - 1], lead = v.spine[v.spine.length - 1];
         if (v.pi >= n - 1) v.speed = Math.min(v.speed, Math.max(70, Math.hypot(tgt[0] - lead[0], tgt[1] - lead[1]) * 7));
-        if (trainAdvance(v, dt)) { v.state = 'bay'; v.parkT = 0.35; }
+        if (trainAdvance(v, dt)) { v.state = 'bay'; v.parkT = 0.35; arrivePuff(v); }
         trail(v, dt);
         break;
       }
       if (v.pi >= n - 1) v.speed = Math.min(v.speed, Math.max(70, Math.hypot(bx - v.x, by - v.y) * 7)); // ease into the bay
       const arrived = followPath(v, dt);
       if (v.spine) setStraightSpine(v);
-      if (arrived) { v.state = 'bay'; v.lift = false; v.parkT = 0.35; }
+      if (arrived) { v.state = 'bay'; v.lift = false; v.parkT = 0.35; arrivePuff(v); }
       trail(v, dt);
       break;
     }
@@ -2472,6 +2501,12 @@ function paintBg(g, th) {
     rr(g, RING.x, RING.y, RING.w, RING.h, 14); g.stroke(); g.setLineDash([]);
   }
   drawQueueArea(g, th);
+  // a soft vignette round the edges for a bit of depth
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  const w = bgCanvas.width, h = bgCanvas.height;
+  const vg = g.createRadialGradient(w / 2, h * 0.55, Math.min(w, h) * 0.45, w / 2, h * 0.55, Math.max(w, h) * 0.75);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(20,10,50,0.22)');
+  g.fillStyle = vg; g.fillRect(0, 0, w, h);
 }
 
 const CIRCLE = {
@@ -3407,6 +3442,51 @@ function drawWreck(w) {
   }
 }
 
+// A parked vehicle glows in its colour when people in the circle want it, and snoozes
+// (💤) when nobody there does yet, so a wrong colour is easy to spot.
+function arrivePuff(v) {
+  const wet = G.T.key === 'boat';
+  const by = v.y + v.len / 2;
+  for (let i = 0; i < 7; i++) {
+    G.parts.push({ type: 'puff', x: v.x + rand(-v.wid / 2, v.wid / 2), y: by + rand(-3, 3), vx: rand(-25, 25), vy: rand(-10, 15), life: 0.5, max: 0.5, size: rand(2, 3.5), grow: 7,
+      color: wet ? 'rgba(255,255,255,0.8)' : G.T.key === 'space' ? 'rgba(110,243,255,0.6)' : 'rgba(210,200,185,0.65)' });
+  }
+}
+
+function drawCloudShadows() {
+  for (let k = 0; k < 3; k++) {
+    const span = view.x1 - view.x0 + 400;
+    const x = view.x0 - 200 + ((G.time * (9 + k * 3) + k * 260) % span);
+    const y = view.y0 + 120 + k * ((view.y1 - view.y0) / 3);
+    const r = 150 + k * 30;
+    const g = ctx.createRadialGradient(x, y, 10, x, y, r);
+    g.addColorStop(0, 'rgba(20,30,60,0.09)'); g.addColorStop(1, 'rgba(20,30,60,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.6, 0.3, 0, TAU); ctx.fill();
+  }
+}
+
+function drawBayHints(over) {
+  const inCircle = new Set();
+  for (const p of G.pods) if (p) inCircle.add(p.c);
+  for (const v of G.bays) {
+    if (!v || v.state !== 'bay') continue;
+    const wanted = inCircle.has(v.color) || v.incoming > 0;
+    if (!over && wanted) {
+      const pulse = 0.5 + 0.5 * Math.sin(G.time * 5 + v.id);
+      const col = v.color === PARTY ? '#ffd23f' : PAL[v.color].main;
+      const g = ctx.createRadialGradient(v.x, v.y, 4, v.x, v.y, v.len * 0.75);
+      g.addColorStop(0, col); g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.globalAlpha = 0.35 + 0.25 * pulse; ctx.fillStyle = g;
+      circ(ctx, v.x, v.y, v.len * 0.75); ctx.fill(); ctx.globalAlpha = 1;
+    } else if (over && !wanted && v.filled < v.cap) {
+      const b = Math.sin(G.time * 2 + v.id) * 2;
+      ctx.font = '14px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.globalAlpha = 0.9; ctx.fillText('💤', v.x + 10, v.y + v.len / 2 - 8 + b); ctx.globalAlpha = 1;
+    }
+  }
+}
+
 function drawWalker(w) {
   const p = w.p;
   if (w.stage < 2) { drawPerson(p.x, p.y, p.c, p.skin, p.hair, Math.sin(p.walk * 18) * 1.2, 1); return; }
@@ -3505,7 +3585,9 @@ function render() {
   for (const v of G.vehicles) if (v.state === 'lot' || v.state === 'bump' || v.state === 'runaway') drawVehicle(v);
   for (const a of G.asteroids) if (a.active) drawDrifter(a);
   for (const w of G.wrecks) drawWreck(w);
+  drawBayHints(false);
   for (const v of G.vehicles) if (v.state === 'bay' || v.state === 'full') drawVehicle(v);
+  drawBayHints(true);
   for (const v of G.vehicles) if (v.state === 'moving' && !v.lift) drawVehicle(v);
   if (G.liftMode) {
     ctx.fillStyle = 'rgba(255,255,255,' + (0.12 + 0.08 * Math.sin(G.time * 8)) + ')';
@@ -3515,6 +3597,7 @@ function render() {
   for (const v of G.vehicles) if (v.state === 'leaving') drawVehicle(v);
   if (G.T.key === 'train') drawTunnels();
   for (const v of G.vehicles) if (v.state === 'moving' && v.lift) drawVehicle(v);
+  if (G.T.key !== 'space') drawCloudShadows();
   drawParticles();
   if (G.flash > 0) {
     ctx.fillStyle = `rgba(255,236,190,${G.flash * 2.4})`;
@@ -3665,6 +3748,7 @@ canvas.addEventListener('pointerdown', (e) => {
   Snd.unlock();
   if (!G || G.state !== 'play' || G.paused) return;
   const [x, y] = toWorld(e.clientX, e.clientY);
+  G.parts.push({ type: 'ring', x, y, vx: 0, vy: 0, life: 0.35, max: 0.35, size: 6, color: 'rgba(255,255,255,0.85)' });
   handleTap(x, y);
 });
 $('btnPause').addEventListener('click', () => { Snd.unlock(); pauseGame(); });
