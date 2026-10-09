@@ -1,4 +1,4 @@
-# 🚌 Lottie's Bus Party ⛵✈️🚂🚀
+# 🚌 Lottie's Bus Party 🚕🦢⛵🎈✈️🎪🚜🚂🚡🚀
 
 A bright, tap-to-play traffic-jam puzzle for your phone, in the style of Bus Fever / Bus Jam.
 
@@ -12,22 +12,31 @@ A bright, tap-to-play traffic-jam puzzle for your phone, in the style of Bus Fev
 - If every bay fills up with colours nobody in the circle wants, it's a **Traffic Jam**.
 
 ## Worlds
+Level 1 is a gentle tutorial. From level 2 the puzzles start properly tricky and keep getting harder.
+
 | Levels | World | Twist |
 |---|---|---|
-| 1–5 | 🚌 City Streets | Bus depots 🏠: buses come out one at a time, only when the spot in front of the door is clear |
-| 6–10 | ⛵ Sunny Harbour | Mystery boats 🎁 hide their colour until they have a clear way out |
-| 11–15 | ✈️ Sky Airport | Refuelling planes ⛽ stay locked until enough others have flown. Planes taxi to the runway to take off |
-| 16–20 | 🚂 Rail Yard | Trains wait nose-to-tail on sidings. Only the end train can leave, so the order really matters. From level 18 it's **Spaghetti Junction** 🍝, with criss-crossing tracks, and level 20 is **Curly Spaghetti** 🌀, where squiggly tracks bend every train. Keep tapping a blocked train and it **crashes** 💥 |
-| 21–25 | 🚀 Star Port | The hardest world: only 4 docking ports, astronauts orbiting a ringed planet, drifting asteroids ☄️ that block launches, plus mystery and charging rockets. Level 25 adds a **black hole** 🕳️ |
-| 26+ | Remix worlds | Everything mixed together, harder every level |
+| 1–5 | 🚕 Taxi Rank | Lots of little cabs, plus a taxi office 🏠 that sends out more one at a time |
+| 6–10 | 🚌 City Streets | Bigger buses and bus depots |
+| 11–15 | 🦢 Swan Lake | Swan pedalos, with ducks 🦆 paddling about in the way |
+| 16–20 | ⛵ Sunny Harbour | Mystery boats 🎁 hide their colour until they have a clear way out |
+| 21–25 | 🎈 Balloon Fiesta | Balloons float off in the direction of their arrow, while flocks of geese 🪿 fly across the field |
+| 26–30 | ✈️ Sky Airport | Refuelling planes ⛽ stay locked until enough others have flown. Planes taxi to the runway to take off |
+| 31–35 | 🎪 Dodgem Fair | Bumps are free here! Some dodgems hide their colour |
+| 36–40 | 🚜 Farm Show | Tractors pull passenger trailers. Barns 🏚️ hold more, and gates 🚧 stay shut until enough have left |
+| 41–45 | 🚂 Rail Yard | Trains on sidings, then **Spaghetti Junction** 🍝 and **Curly Spaghetti** 🌀. Keep tapping a blocked train and it **crashes** 💥 |
+| 46–50 | 🚡 Snowy Peaks | Cable cars in rows on cables (only the end one can go), and frozen ❄️ cars |
+| 51–55 | 🚀 Star Port | The hardest: 4 docking ports, asteroids ☄️, mystery and charging rockets, and a **black hole** 🕳️ |
+| 56+ | Remix worlds | Everything mixed together, harder every level |
 
 Every 5th level is a **🎉 Party Level** with a rainbow Party vehicle. Fill it to start a party.
 
 ## Extra features
-- **Party meter:** send vehicles off quickly to fill it. A full meter starts **PARTY TIME**, with disco lights, music, faster passengers and double coins.
-- **Boosters:** 🅿️ Extra Bay, a lift (🚁 Heli-Lift / 🏗️ Crane / 🚜 Tow / 🛸 Tractor Beam) that pulls any vehicle out, and ✨ Sort Queue
+- **Party meter:** send vehicles off in a really quick streak to fill it (it's hard!). A full meter starts **PARTY TIME**, with disco lights, music, faster passengers and double coins.
+- **Boosters:** 🅿️ Extra Bay, a lift (🚁 Heli-Lift / 🏗️ Crane / 🛻 Tow / 🧲 Magnet / 🛸 Tractor Beam) that pulls any vehicle out, and ✨ Sort Queue
+- An original chiptune menu theme
 - Levels are generated endlessly, and each one is built so it can be solved.
-- Stars, coins and progress are saved on your device.
+- Stars, coins and progress are saved on your device in two places (local storage plus a cookie backup), so they survive one being cleared.
 
 ## Install on iPhone / iPad
 1. Open the play link in **Safari**

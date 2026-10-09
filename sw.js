@@ -1,6 +1,6 @@
 // Offline support: always try the network first (so updates show up straight away),
 // fall back to the cached copy when offline.
-const CACHE = 'lotties-bus-party-v7';
+const CACHE = 'lotties-bus-party-v8';
 const ASSETS = [
   './', './index.html', './style.css', './game.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',

@@ -49,17 +49,50 @@ const SAVE_KEY = 'lottiesBusParty.v1';
 function freshSave() {
   return { maxLevel: 1, coins: 50, boost: { bay: 2, lift: 2, sort: 2 }, sound: true, vib: true, stars: {}, seen: {} };
 }
+// Progress is kept in localStorage and mirrored to a long-lived cookie, and on load we use
+// whichever copy has got further, so it survives one of them being cleared.
+function packSave(o) {
+  const stars = [];
+  for (const k of Object.keys(o.stars)) stars[+k] = o.stars[k];
+  return [o.maxLevel, o.coins, [o.boost.bay, o.boost.lift, o.boost.sort].join('.'),
+    Array.from(stars, (x) => x || 0).join(''), (o.sound ? 1 : 0) + '' + (o.vib ? 1 : 0), Object.keys(o.seen).join('.')].join('~');
+}
+function unpackSave(str) {
+  const [lv, coins, boost, stars, flags, seen] = str.split('~');
+  const f = freshSave();
+  const b = (boost || '').split('.').map(Number);
+  f.maxLevel = Math.max(1, +lv || 1); f.coins = +coins || 0;
+  if (b.length === 3) f.boost = { bay: b[0], lift: b[1], sort: b[2] };
+  (stars || '').split('').forEach((c, i) => { if (+c) f.stars[i] = +c; });
+  f.sound = (flags || '11')[0] === '1'; f.vib = (flags || '11')[1] === '1';
+  (seen || '').split('.').forEach((k) => { if (k) f.seen[k] = 1; });
+  return f;
+}
+function readCookieSave() {
+  try {
+    const m = document.cookie.match(/(?:^|; )lbp=([^;]*)/);
+    return m ? unpackSave(decodeURIComponent(m[1])) : null;
+  } catch (e) { return null; }
+}
 let save = (() => {
+  const found = [];
   try {
     const s = JSON.parse(localStorage.getItem(SAVE_KEY));
     if (s && typeof s === 'object') {
       const f = freshSave();
-      return Object.assign(f, s, { boost: Object.assign(f.boost, s.boost || {}), stars: s.stars || {}, seen: s.seen || {} });
+      found.push(Object.assign(f, s, { boost: Object.assign(f.boost, s.boost || {}), stars: s.stars || {}, seen: s.seen || {} }));
     }
   } catch (e) { /* storage unavailable */ }
-  return freshSave();
+  const c = readCookieSave();
+  if (c) found.push(c);
+  found.sort((a, b) => (b.maxLevel - a.maxLevel) || (b.coins - a.coins));
+  return found[0] || freshSave();
 })();
-function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* ignore */ } }
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignore */ }
+function persist() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* ignore */ }
+  try { document.cookie = 'lbp=' + encodeURIComponent(packSave(save)) + '; max-age=315360000; path=/; SameSite=Lax'; } catch (e) { /* ignore */ }
+}
 
 /* --------------------------------------------------------------- palette */
 const PAL = [
@@ -81,70 +114,114 @@ const HAIR = ['#3b2a20', '#1d1d1d', '#8a4b20', '#e8b84e', '#c24a2a', '#6b4b9e', 
 
 /* ---------------------------------------------------------------- themes */
 const THEMES = {
+  taxi: {
+    key: 'taxi', world: 'Taxi Rank', noun: 'taxi', plural: 'taxis', emoji: '🚕', depart: 'road',
+    lift: ['🛻', 'Tow'], lockName: 'Off duty', lockIcon: '🚫', garage: 'taxi office',
+    sizes: { 4: [36, 22], 6: [44, 23], 10: [56, 25] }, maxN: 34, twist: { garages: true },
+  },
   bus: {
     key: 'bus', world: 'City Streets', noun: 'bus', plural: 'buses', emoji: '🚌', depart: 'road',
     lift: ['🚁', 'Heli-Lift'], lockName: 'Wheel-clamped', lockIcon: '🔒', garage: 'bus depot',
-    sizes: { 4: [42, 24], 6: [54, 25], 10: [70, 27] }, maxN: 32,
+    sizes: { 4: [42, 24], 6: [54, 25], 10: [70, 27] }, maxN: 32, twist: { garages: true },
+    intro: { emoji: '🚌', title: 'City Streets', html: `<p>Big buses now, and more of them!</p><div class="tip">🏠 <b>Bus depots</b> hold extra buses that come out one at a time.</div>` },
+  },
+  swan: {
+    key: 'swan', world: 'Swan Lake', noun: 'pedalo', plural: 'pedalos', emoji: '🦢', depart: 'road',
+    lift: ['🏗️', 'Crane'], lockName: 'Tied up', lockIcon: '🪢', garage: 'boathouse', drifter: 'duck',
+    sizes: { 4: [40, 26], 6: [48, 28], 10: [60, 30] }, maxN: 28, twist: { drifters: true },
+    intro: { emoji: '🦢', title: 'Swan Lake', html: `<p>Swan pedalos paddle round the park lake to the jetty.</p><div class="tip">🦆 <b>NEW: Ducks!</b> They paddle about and get in the way. Wait for them to swim off before you set off!</div>` },
   },
   boat: {
     key: 'boat', world: 'Sunny Harbour', noun: 'boat', plural: 'boats', emoji: '⛵', depart: 'road',
     lift: ['🏗️', 'Crane'], lockName: 'Still moored', lockIcon: '⚓', garage: 'boathouse',
-    sizes: { 4: [42, 24], 6: [54, 26], 10: [68, 28] }, maxN: 30,
+    sizes: { 4: [42, 24], 6: [54, 26], 10: [68, 28] }, maxN: 30, twist: { mystery: true },
+    intro: { emoji: '⛵', title: 'Sunny Harbour', html: `<p>Boats sail round the jetty to their berths.</p><div class="tip">🎁 <b>NEW: Mystery boats!</b> Grey boats hide their colour under a tarp until they have a clear way out.</div>` },
+  },
+  balloon: {
+    key: 'balloon', world: 'Balloon Fiesta', noun: 'balloon', plural: 'balloons', emoji: '🎈', depart: 'up',
+    lift: ['🚁', 'Heli-Lift'], lockName: 'Heating up', lockIcon: '🔥', garage: 'launch tent', drifter: 'bird',
+    sizes: { 4: [34, 34], 6: [40, 40], 10: [48, 48] }, maxN: 22, twist: { drifters: true, mystery: true },
+    intro: { emoji: '🎈', title: 'Balloon Fiesta', html: `<p>Hot air balloons drift across the launch field. The arrow shows which way each one will float, and full ones rise up and away!</p><div class="tip">🪿 <b>NEW: Geese!</b> Flocks fly across the field. Wait for a gap.</div>` },
   },
   plane: {
     key: 'plane', world: 'Sky Airport', noun: 'plane', plural: 'planes', emoji: '✈️', depart: 'runway',
     lift: ['🚜', 'Tow'], lockName: 'Refuelling', lockIcon: '⛽', garage: 'hangar',
-    sizes: { 4: [40, 34], 6: [50, 38], 10: [62, 44] }, maxN: 24,
+    sizes: { 4: [40, 34], 6: [50, 38], 10: [62, 44] }, maxN: 24, twist: { locks: true, garages: true },
+    intro: { emoji: '✈️', title: 'Sky Airport', html: `<p>Planes taxi to the gates, then head to the runway and take off when they're full!</p><div class="tip">⛽ <b>NEW: Refuelling planes</b> stay locked until enough other planes have taken off.</div>` },
+  },
+  dodgem: {
+    key: 'dodgem', world: 'Dodgem Fair', noun: 'dodgem', plural: 'dodgems', emoji: '🎪', depart: 'road',
+    lift: ['🧲', 'Magnet'], lockName: 'Needs a token', lockIcon: '🎟️', garage: 'ride tent',
+    sizes: { 4: [34, 26], 6: [40, 28], 10: [50, 30] }, maxN: 30, twist: { freeBumps: true, mystery: true },
+    intro: { emoji: '🎪', title: 'Dodgem Fair', html: `<p>Roll up, roll up! At the fair, <b>bumps are free</b>, so they don't cost you stars.</p><div class="tip">🎁 Some dodgems have a cover over their colour until they can drive out.</div>` },
+  },
+  tractor: {
+    key: 'tractor', world: 'Farm Show', noun: 'tractor', plural: 'tractors', emoji: '🚜', depart: 'road',
+    lift: ['🏗️', 'Crane'], lockName: 'Gate shut', lockIcon: '🚧', garage: 'barn',
+    sizes: { 4: [46, 22], 6: [58, 22], 10: [74, 24] }, maxN: 28, twist: { garages: true, locks: true },
+    intro: { emoji: '🚜', title: 'Farm Show', html: `<p>Tractors pull trailers full of passengers round the farm track.</p><div class="tip">🏚️ <b>Barns</b> hold more tractors, and 🚧 <b>shut gates</b> open once enough tractors have left.</div>` },
   },
   train: {
     key: 'train', world: 'Rail Yard', noun: 'train', plural: 'trains', emoji: '🚂', depart: 'road',
     lift: ['🏗️', 'Crane'], lockName: 'Red signal', lockIcon: '🚦', garage: 'engine shed',
-    sizes: { 4: [44, 18], 6: [60, 18], 10: [80, 18] }, maxN: 26,
+    sizes: { 4: [44, 18], 6: [60, 18], 10: [80, 18] }, maxN: 26, lines: true, twist: {},
+    intro: { emoji: '🚂', title: 'Rail Yard', html: `<p>Trains wait nose-to-tail on long sidings. Only a train with <b>nothing in front of it</b> can pull out to the platforms.</p>
+      <div class="tip">🧠 Think ahead: the train you need might be stuck at the back of a siding!</div>
+      <div class="tip">💥 Keep tapping a blocked train and it will <b>crash</b>. Both trains are wrecked, their passengers go home and you can only get 1 star!</div>` },
+  },
+  cable: {
+    key: 'cable', world: 'Snowy Peaks', noun: 'cable car', plural: 'cable cars', emoji: '🚡', depart: 'road',
+    lift: ['🚁', 'Heli-Lift'], lockName: 'Frozen', lockIcon: '❄️', garage: 'cable station',
+    sizes: { 4: [30, 24], 6: [38, 26], 10: [48, 28] }, maxN: 30, lines: true, twist: { locks: true, mystery: true },
+    intro: { emoji: '🚡', title: 'Snowy Peaks', html: `<p>Cable cars hang in rows on long cables. Only the car at the end of a cable can move off.</p><div class="tip">❄️ <b>Frozen</b> cable cars thaw out once enough others have left.</div>` },
   },
   space: {
     key: 'space', world: 'Star Port', noun: 'rocket', plural: 'rockets', emoji: '🚀', depart: 'up',
     lift: ['🛸', 'Tractor Beam'], lockName: 'Charging', lockIcon: '🔋', garage: 'launch silo',
-    sizes: { 4: [40, 22], 6: [48, 24], 10: [60, 28] }, maxN: 26,
+    sizes: { 4: [40, 22], 6: [48, 24], 10: [60, 28] }, maxN: 26, drifter: 'asteroid',
+    twist: { mystery: true, locks: true, garages: true, drifters: true },
+    intro: { emoji: '🚀', title: 'Star Port', html: `<p>The toughest world! Rockets blast off from just <b>4 docking ports</b>.</p>
+      <div class="tip">☄️ <b>Asteroids</b> drift across the launch field. Wait for a gap before you launch!</div>
+      <div class="tip">🔋 Charging rockets and 🎁 mystery rockets are back too.</div>` },
   },
 };
-const THEME_ORDER = ['bus', 'boat', 'plane', 'train', 'space'];
+const THEME_ORDER = ['taxi', 'bus', 'swan', 'boat', 'balloon', 'plane', 'dodgem', 'tractor', 'train', 'cable', 'space'];
 const PRICE = { bay: 60, lift: 45, sort: 30 };
 const MAX_BAYS = 7;
 
-/* Difficulty curve: 5 levels per world, worlds go City -> Harbour -> Airport -> Rail Yard ->
- * Star Port, then repeat as harder remixes. Every 5th level is a Party level. */
+/* Difficulty: 5 levels per world, eleven worlds, then harder remixes. Level 1 is a gentle
+ * tutorial; from level 2 the puzzle starts around where the old level 15 was and keeps rising.
+ * Every 5th level is a Party level. */
 function levelConfig(L) {
   const wi = Math.floor((L - 1) / 5);
   const theme = THEME_ORDER[wi % THEME_ORDER.length];
   const cycle = Math.floor(wi / THEME_ORDER.length);
   const stage = (L - 1) % 5;
   const party = stage === 4;
-  const T = THEMES[theme];
+  const T = THEMES[theme], tw = T.twist || {};
+  const D = L === 1 ? 6 : Math.min(60, 12 + L * 0.9); // how hard the puzzle is
   const space = theme === 'space';
   const bays = space ? 4 : 5;
-  const n = Math.min(T.maxN, Math.round(7 + L * 0.85 + (party ? 3 : 0)));
-  const colors = Math.min(8, 3 + Math.floor((L + 1) / 4));
-  let open = L <= 3 ? 3 : bays - 1;
-  if ((cycle > 0 && party) || (L > 45 && L % 2 === 1)) open = bays;
-  const stick = clamp(0.8 - L * 0.035, 0.2, 0.8);
-  const mysteryFrac = (theme === 'boat' || space || cycle > 0) ? clamp(0.12 + cycle * 0.08 + stage * 0.03 + (space ? 0.08 : 0), 0, 0.4) : 0;
-  const lockCount = (theme === 'plane' || space || cycle > 0) ? Math.min(7, 1 + stage + cycle * 2) : 0;
-  let garages = 0;
-  if (theme === 'bus') garages = L >= 3 ? (stage >= 3 ? 2 : 1) : 0;
-  else if (theme === 'plane' || space) garages = 1;
-  if (cycle > 0 && theme !== 'train') garages = 2;
-  const garageSize = 2 + Math.min(3, Math.floor(L / 8));
-  const asteroids = space ? Math.min(5, 2 + Math.floor(stage / 2) + cycle) : 0;
+  const n = Math.min(T.maxN, Math.round(10 + D * 0.85 + (party ? 3 : 0)));
+  const colors = Math.min(8, 3 + Math.floor((D + 1) / 4));
+  let open = bays - 1;
+  if ((cycle > 0 && party) || (D > 45 && L % 2 === 1)) open = bays;
+  const stick = clamp(0.8 - D * 0.035, 0.2, 0.8);
+  const mysteryFrac = (tw.mystery || cycle > 0) ? clamp(0.12 + cycle * 0.08 + stage * 0.03 + (space ? 0.08 : 0), 0, 0.4) : 0;
+  const lockCount = (tw.locks || cycle > 0) ? Math.min(7, 1 + stage + cycle * 2) : 0;
+  let garages = tw.garages ? (stage >= 3 ? 2 : 1) : 0;
+  if (cycle > 0 && !T.lines) garages = 2;
+  const garageSize = 3 + Math.min(3, Math.floor(D / 12));
+  const asteroids = tw.drifters ? Math.min(5, 2 + Math.floor(stage / 2) + cycle) : 0;
   const blackHole = space && (stage === 4 || (cycle > 0 && stage >= 2));
-  const capW = L <= 3 ? { 4: 0.55, 6: 0.45, 10: 0 } : L <= 10 ? { 4: 0.35, 6: 0.45, 10: 0.2 } : { 4: 0.25, 6: 0.42, 10: 0.33 };
-  const pods = clamp(24 - Math.floor(L / 2), 12, 24); // holding-circle size: fewer people = less choice
-  // later Rail Yard levels criss-cross the tracks so it's hard to see what blocks what
-  // the hardest rail levels: squiggly curved tracks
+  const capW = D <= 8 ? { 4: 0.45, 6: 0.45, 10: 0.1 } : D <= 14 ? { 4: 0.3, 6: 0.45, 10: 0.25 } : { 4: 0.22, 6: 0.42, 10: 0.36 };
+  const pods = clamp(24 - Math.floor(D / 2), 12, 24); // holding-circle size: fewer people = less choice
+  // later Rail Yard levels criss-cross the tracks, and the hardest ones are squiggly
   const curvy = theme === 'train' && ((cycle === 0 && stage === 4) || (cycle > 0 && stage >= 2)) ? Math.min(7, 5 + cycle) : 0;
   const spaghetti = theme === 'train' && !curvy && (stage >= 2 || cycle > 0) ? Math.min(10, 4 + stage + cycle * 2) : 0;
   return {
     L, theme, cycle, stage, party, n, colors, open, stick, pods, bays, garages, garageSize, asteroids, spaghetti, curvy, blackHole,
-    diag: L >= 4 && theme !== 'train', mysteryFrac, lockCount, capW, world: wi + 1,
+    diag: D >= 8 && !T.lines, mysteryFrac, lockCount, capW, world: wi + 1,
   };
 }
 
@@ -528,7 +605,7 @@ function tryGenerate(cfg, T, rng) {
   });
 
   // 2) vehicles parked in the lot
-  const target = Math.max(4, cfg.n - inGarages);
+  const target = Math.max(4, cfg.n);
   const lotV = [];
   const fits = (v) => {
     const b = boxOf(v, PAD);
@@ -537,7 +614,7 @@ function tryGenerate(cfg, T, rng) {
     return true;
   };
   let tracks = null;
-  if (cfg.theme === 'train') {
+  if (T.lines) {
     tracks = [];
     if (cfg.spaghetti) {
       // Spaghetti Junction: straight lines at all sorts of angles criss-crossing the yard
@@ -546,7 +623,7 @@ function tryGenerate(cfg, T, rng) {
         tracks.push({ x: LOT.x + 40 + rng() * (LOT.w - 80), y: LOT.y + 40 + rng() * (LOT.h - 80), ang: angs[(rng() * angs.length) | 0] });
       }
     } else {
-      // parallel sidings
+      // parallel sidings (or cables)
       for (let i = 0; i < 7; i++) tracks.push({ x: LOT.x + LOT.w / 2, y: LOT.y + 26 + i * (LOT.h - 52) / 6, ang: 0 });
     }
     // trains sit nose-to-tail along each line, mostly facing the nearer end
@@ -750,8 +827,12 @@ const semi = (base, s) => base * Math.pow(2, s / 12);
 const sfx = {
   go() {
     const k = G && G.T.key;
-    if (k === 'boat') Snd.noise(0.35, 0.12, 0, 300, 900);
+    if (k === 'boat' || k === 'swan') Snd.noise(0.35, 0.12, 0, 300, 900);
     else if (k === 'plane') Snd.noise(0.4, 0.1, 0, 600, 2400);
+    else if (k === 'balloon') Snd.noise(0.5, 0.14, 0, 200, 700);
+    else if (k === 'dodgem') Snd.tone(1200, 0.18, 'square', 0.04, 300);
+    else if (k === 'tractor') { [0, 0.1, 0.2, 0.3].forEach((d) => Snd.tone(70, 0.08, 'sawtooth', 0.07, 60, d)); }
+    else if (k === 'cable') Snd.tone(220, 0.4, 'sine', 0.06, 260);
     else if (k === 'train') { [0, 0.12, 0.24].forEach((d) => Snd.noise(0.09, 0.1, d, 400, 700)); }
     else if (k === 'space') Snd.tone(220, 0.35, 'sine', 0.08, 880);
     else Snd.tone(150, 0.3, 'sawtooth', 0.05, 300);
@@ -761,6 +842,10 @@ const sfx = {
   depart() {
     const k = G && G.T.key;
     if (k === 'plane') Snd.noise(1.6, 0.13, 0.3, 250, 3200);
+    else if (k === 'balloon') Snd.noise(1.0, 0.14, 0, 180, 600);
+    else if (k === 'swan') { Snd.tone(520, 0.12, 'sawtooth', 0.05, 330); Snd.tone(520, 0.12, 'sawtooth', 0.05, 330, 0.16); }
+    else if (k === 'cable') { Snd.tone(1046, 0.4, 'triangle', 0.06); Snd.tone(1318, 0.5, 'triangle', 0.04, null, 0.08); }
+    else if (k === 'tractor') Snd.tone(90, 0.6, 'sawtooth', 0.06, 120);
     else if (k === 'space') { Snd.noise(1.2, 0.12, 0, 150, 2500); Snd.tone(110, 0.9, 'sawtooth', 0.04, 440); }
     else if (k === 'train') { Snd.tone(311, 0.3, 'sawtooth', 0.05); Snd.tone(392, 0.3, 'sawtooth', 0.04); Snd.tone(311, 0.4, 'sawtooth', 0.05, null, 0.35); Snd.tone(392, 0.4, 'sawtooth', 0.04, null, 0.35); }
     else if (k === 'boat') { Snd.tone(147, 0.45, 'sawtooth', 0.06); Snd.tone(110, 0.45, 'sawtooth', 0.05); }
@@ -769,6 +854,11 @@ const sfx = {
   honk() {
     const k = G && G.T.key;
     if (k === 'boat') { Snd.tone(130, 0.35, 'sawtooth', 0.08); Snd.tone(196, 0.35, 'sawtooth', 0.05); }
+    else if (k === 'taxi') { Snd.tone(660, 0.08, 'square', 0.05); Snd.tone(660, 0.08, 'square', 0.05, null, 0.11); }
+    else if (k === 'swan') Snd.tone(560, 0.14, 'sawtooth', 0.06, 300);
+    else if (k === 'dodgem') Snd.tone(320, 0.25, 'sine', 0.12, 140);
+    else if (k === 'tractor') Snd.tone(190, 0.5, 'sawtooth', 0.06, 140);
+    else if (k === 'balloon' || k === 'cable') Snd.tone(1046, 0.25, 'triangle', 0.06);
     else if (k === 'plane') { Snd.tone(880, 0.09, 'square', 0.05); Snd.tone(880, 0.09, 'square', 0.05, null, 0.12); }
     else if (k === 'train') { Snd.tone(330, 0.22, 'sawtooth', 0.06); Snd.tone(415, 0.22, 'sawtooth', 0.05); }
     else if (k === 'space') Snd.tone(660, 0.2, 'square', 0.05, 220);
@@ -956,7 +1046,7 @@ function startLevel(n) {
   }));
   const asteroids = [];
   for (let i = 0; i < cfg.asteroids; i++) {
-    const r = rand(11, 16), a = rand(0, TAU), sp = rand(20, 32);
+    const r = rand(11, 16), a = rand(0, TAU), sp = T.drifter === 'duck' ? rand(12, 20) : T.drifter === 'bird' ? rand(30, 42) : rand(20, 32);
     const shape = [];
     for (let k = 0; k < 9; k++) shape.push(rand(0.78, 1.08));
     asteroids.push({
@@ -1012,37 +1102,12 @@ function showIntros() {
     });
   }
   const wkey = 'w_' + cfg.theme + '_' + Math.min(cfg.cycle, 1);
-  if (!save.seen[wkey] && cfg.stage === 0 && !(cfg.theme === 'bus' && cfg.cycle === 0)) {
+  if (!save.seen[wkey] && cfg.stage === 0 && !(cfg.theme === THEME_ORDER[0] && cfg.cycle === 0)) {
     save.seen[wkey] = 1;
-    if (cfg.cycle === 0 && cfg.theme === 'boat') {
+    if (cfg.cycle === 0 && T.intro) pages.push(T.intro);
+    else if (cfg.cycle > 0) {
       pages.push({
-        emoji: '⛵', title: 'Sunny Harbour',
-        html: `<p>Boats sail round the jetty to their berths, and passengers wait on the pier.</p>
-          <div class="tip">🎁 <b>NEW: Mystery boats!</b> Grey boats hide their colour under a tarp until they have a clear way out.</div>`,
-      });
-    } else if (cfg.cycle === 0 && cfg.theme === 'plane') {
-      pages.push({
-        emoji: '✈️', title: 'Sky Airport',
-        html: `<p>Planes taxi round the airport to the gates, then take off when they're full!</p>
-          <div class="tip">⛽ <b>NEW: Refuelling planes!</b> They're locked until that many other planes have taken off.</div>`,
-      });
-    } else if (cfg.cycle === 0 && cfg.theme === 'train') {
-      pages.push({
-        emoji: '🚂', title: 'Rail Yard',
-        html: `<p>Trains wait nose-to-tail on long sidings. Only a train with <b>nothing in front of it</b> can pull out to the platforms.</p>
-          <div class="tip">🧠 Think ahead: the train you need might be stuck at the back of a siding!</div>
-          <div class="tip">💥 Keep tapping a blocked train and it will <b>crash</b>. Both trains are wrecked, their passengers go home and you can only get 1 star!</div>`,
-      });
-    } else if (cfg.cycle === 0 && cfg.theme === 'space') {
-      pages.push({
-        emoji: '🚀', title: 'Star Port',
-        html: `<p>The toughest world! Rockets blast off from just <b>4 docking ports</b>.</p>
-          <div class="tip">☄️ <b>Asteroids</b> drift across the launch field. Wait for a gap before you launch!</div>
-          <div class="tip">🔋 Charging rockets and 🎁 mystery rockets are back too.</div>`,
-      });
-    } else {
-      pages.push({
-        emoji: T.emoji, title: `${T.world} — Remix!`,
+        emoji: T.emoji, title: `${T.world}: Remix!`,
         html: `<p>Welcome back! This time <b>mystery</b> 🎁, <b>locked</b> ${T.lockIcon} and <b>${T.garage}</b> 🏠 ${T.plural} are everywhere. Good luck!</p>`,
       });
     }
@@ -1108,7 +1173,7 @@ function respawnAsteroid(a) {
   else if (side === 2) { a.x = rand(LOT.x, LOT.x + LOT.w); a.y = LOT.y + LOT.h + m; }
   else { a.x = LOT.x - m; a.y = rand(LOT.y, LOT.y + LOT.h); }
   const tx = LOT.x + LOT.w / 2 + rand(-110, 110), ty = LOT.y + LOT.h / 2 + rand(-120, 120);
-  const d = Math.hypot(tx - a.x, ty - a.y) || 1, sp = rand(20, 32);
+  const d = Math.hypot(tx - a.x, ty - a.y) || 1, sp = G.T.drifter === 'duck' ? rand(12, 20) : G.T.drifter === 'bird' ? rand(30, 42) : rand(20, 32);
   a.vx = (tx - a.x) / d * sp; a.vy = (ty - a.y) / d * sp;
   a.active = true;
 }
@@ -1239,7 +1304,7 @@ function startBump(v, blockers) {
   const { u: hit, d } = firstHit(v, blockers);
   v.state = 'bump';
   v.bump = { ox: v.x, oy: v.y, s: d, t: 0, d1: Math.max(0.06, d / 650), hit, hitDone: false };
-  G.crashes++;
+  if (!G.T.twist.freeBumps) G.crashes++;
 }
 
 function curvyBump(v, u) {
@@ -1342,7 +1407,7 @@ function onCrash(v, b) {
     const a = rand(0, TAU), sp = rand(60, 160);
     G.parts.push({ type: 'star', x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.55, max: 0.55, size: rand(4, 7), color: '#ffe14d', rot: rand(0, TAU), vr: rand(-8, 8) });
   }
-  G.floats.push({ x: cx, y: cy - 8, text: pick(['Honk!', 'Beep!', 'Oops!', 'Bonk!']), life: 0.8, max: 0.8, color: '#ffffff', size: 13 });
+  G.floats.push({ x: cx, y: cy - 8, text: G.T.twist.freeBumps ? pick(['Bonk! 😄', 'Boing!', 'Wheee!']) : pick(['Honk!', 'Beep!', 'Oops!', 'Bonk!']), life: 0.8, max: 0.8, color: '#ffffff', size: 13 });
   sfx.honk(); buzz(30);
   G.shake = 0.22;
 }
@@ -1523,11 +1588,11 @@ function depart(v) {
     }
   }
   if (!partying) {
-    G.fever += (G.time - G.lastDepart < 6) ? 26 : 15;
+    G.fever += (G.time - G.lastDepart < 4) ? 11 : 6;
     if (v.color === PARTY) G.fever = 100;
     if (G.fever >= 100) startParty();
   } else {
-    G.partyT = Math.min(G.partyT + 0.8, 9);
+    G.partyT = Math.min(G.partyT + 0.4, 8);
   }
   G.lastDepart = G.time;
   sfx.depart();
@@ -1542,6 +1607,7 @@ function startParty() {
 
 function addCoins(n, x, y) {
   save.coins += n; G.earned += n;
+  persist();
   G.floats.push({ x, y, text: `+${n} 🪙`, life: 1, max: 1, color: '#fff36b', size: n > 5 ? 18 : 14 });
   sfx.coin();
   const pill = $('coins'); pill.classList.remove('bump'); void pill.offsetWidth; pill.classList.add('bump');
@@ -1768,10 +1834,14 @@ function updateVehicle(v, dt) {
 function trail(v, dt) {
   const k = G.T.key;
   const bx = v.x - Math.cos(v.ang) * v.len / 2, by = v.y - Math.sin(v.ang) * v.len / 2;
-  if (k === 'boat' && !v.lift) {
+  if ((k === 'boat' || k === 'swan') && !v.lift) {
     if (Math.random() < dt * 30) G.parts.push({ type: 'puff', x: bx + rand(-2, 2), y: by + rand(-2, 2), vx: 0, vy: 0, life: 0.45, max: 0.45, size: rand(1.5, 2.5), grow: 5, color: 'rgba(255,255,255,0.7)' });
-  } else if (k === 'bus' && !v.lift) {
+  } else if ((k === 'bus' || k === 'taxi') && !v.lift) {
     if (Math.random() < dt * 14) G.parts.push({ type: 'puff', x: bx, y: by, vx: rand(-10, 10), vy: rand(-10, 10), life: 0.5, max: 0.5, size: 2.5, grow: 7, color: 'rgba(90,90,110,0.45)' });
+  } else if (k === 'tractor' && !v.lift) {
+    if (Math.random() < dt * 16) { const fx = v.x + Math.cos(v.ang) * (v.len / 2 - 14), fy = v.y + Math.sin(v.ang) * (v.len / 2 - 14); G.parts.push({ type: 'puff', x: fx, y: fy, vx: rand(-8, 8), vy: rand(-22, -10), life: 0.6, max: 0.6, size: 2.5, grow: 7, color: 'rgba(60,55,60,0.5)' }); }
+  } else if (k === 'dodgem' && !v.lift) {
+    if (Math.random() < dt * 10) { const fx = v.x - Math.cos(v.ang) * (v.len / 2 - 6), fy = v.y - Math.sin(v.ang) * (v.len / 2 - 6); G.parts.push({ type: 'spark', x: fx, y: fy, vx: rand(-40, 40), vy: rand(-60, -20), life: 0.4, max: 0.4, size: 1.6, color: pick(['#fff36b', '#7fe8ff']) }); }
   } else if (k === 'space' && !v.lift) {
     if (Math.random() < dt * 45) G.parts.push({ type: 'puff', x: bx + rand(-2, 2), y: by + rand(-2, 2), vx: -Math.cos(v.ang) * 40, vy: -Math.sin(v.ang) * 40, life: 0.35, max: 0.35, size: rand(2, 3.5), grow: 4, color: pick(['rgba(255,180,70,0.9)', 'rgba(255,240,150,0.9)', 'rgba(255,110,90,0.8)']) });
   } else if (k === 'train' && !v.lift) {
@@ -1792,7 +1862,7 @@ function update(dt) {
     if (Math.random() < dt * 25) confetti(rand(view.x0, view.x1), view.y0 - 10, false);
     if (G.partyT <= 0) { G.partyT = 0; G.fever = 0; }
   } else {
-    G.fever = Math.max(0, G.fever - dt * 2.2);
+    G.fever = Math.max(0, G.fever - dt * 3.5);
   }
 
   for (const v of G.vehicles) if (v.state !== 'lot' && v.state !== 'gone' && v.state !== 'garage') updateVehicle(v, dt);
@@ -2068,6 +2138,94 @@ function tree(g, x, y, r) {
   g.fillStyle = '#7be08f'; circ(g, x - r * 0.4, y - r * 0.4, r * 0.25); g.fill();
 }
 
+const NEWBG = {
+  swan:    { grass: '#86d65a', plaza: '#e7ad6e', edge: '#a8692f', planks: true, strip: '#5ec8ef', road: '#88dcf7', lot: '#3fb2e6', line: 'rgba(255,255,255,0.55)', deco: 'lake' },
+  balloon: { grass: '#9edc6a', plaza: '#e3f5c8', edge: '#9ccc6a', strip: '#bfe8a0', road: '#d4f0ff', lot: '#8fd16a', line: 'rgba(255,255,255,0.85)', deco: 'fields' },
+  dodgem:  { grass: '#2c1c55', plaza: '#ffe0f0', edge: '#ff5fa2', strip: '#4a3d7a', road: '#5c5f78', lot: '#8a90a8', line: '#ffd23f', deco: 'fair' },
+  tractor: { grass: '#9bd45a', plaza: '#e6c79a', edge: '#b8915c', strip: '#cdb48a', road: '#a8834f', lot: '#8c6a3e', line: 'rgba(255,240,200,0.55)', deco: 'farm' },
+  cable:   { grass: '#eef6ff', plaza: '#d8a46c', edge: '#9b6a3c', planks: true, strip: '#c8d8ec', road: '#dfeaf7', lot: '#f7fbff', line: '#3b3f52', deco: 'snow' },
+};
+
+function pine(g, x, y, r) {
+  g.fillStyle = 'rgba(0,0,0,0.12)'; circ(g, x + 3, y + 4, r * 0.8); g.fill();
+  g.fillStyle = '#2f7d4f'; g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r * 0.8, y + r * 0.7); g.lineTo(x - r * 0.8, y + r * 0.7); g.closePath(); g.fill();
+  g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r * 0.35, y - r * 0.3); g.lineTo(x - r * 0.35, y - r * 0.3); g.closePath(); g.fill();
+}
+
+function paintNewWorld(g, th, o) {
+  const B = NEWBG[th], { X0, Y0, W, H, qTop, rng, roadH, outside, V } = o;
+  g.fillStyle = B.grass; g.fillRect(X0, Y0, W, H);
+  // scenery around the edges
+  for (let i = 0; i < 70; i++) {
+    const x = X0 + rng() * W, y = Y0 + rng() * H;
+    if (!outside(x, y)) continue;
+    const far = y > WORLD_BOTTOM + 10 || x < -16 || x > LW + 16;
+    if (B.deco === 'fields') { g.fillStyle = pick(['#b5e07a', '#e8d96a', '#7cc95a', '#d9b25a']); g.fillRect(x - 14, y - 10, 28, 20); }
+    else if (B.deco === 'farm') { g.fillStyle = '#e8c65a'; circ(g, x, y, 5); g.fill(); g.strokeStyle = '#b8912f'; g.lineWidth = 1; g.stroke(); }
+    else if (B.deco === 'fair') { g.fillStyle = pick(['#ffd23f', '#ff5fa2', '#7fe8ff', '#5bf08a']); circ(g, x, y, 2); g.fill(); }
+    else if (B.deco === 'snow' && far) pine(g, x, y, 10 + rng() * 6);
+    else if (B.deco === 'lake' && far) tree(g, x, y, 9 + rng() * 7);
+  }
+  // waiting area
+  g.fillStyle = B.plaza; rr(g, 6, qTop - 4, 388, V.qH + 2, 14); g.fill();
+  g.save(); rr(g, 6, qTop - 4, 388, V.qH + 2, 14); g.clip();
+  g.strokeStyle = 'rgba(0,0,0,0.08)'; g.lineWidth = 1;
+  if (B.planks) for (let x = 6; x < 400; x += 10) { g.beginPath(); g.moveTo(x, qTop - 4); g.lineTo(x, 0); g.stroke(); }
+  else for (let x = 6; x < 400; x += 20) for (let y = qTop - 4; y < 0; y += 20) { g.strokeRect(x, y, 20, 20); }
+  g.restore();
+  g.strokeStyle = B.edge; g.lineWidth = 3; rr(g, 6, qTop - 4, 388, V.qH + 2, 14); g.stroke();
+  // loading strip, the loop and the field
+  g.fillStyle = B.strip; g.fillRect(X0, 0, W, BAY_H);
+  g.fillStyle = B.edge; g.fillRect(X0, -3, W, 5);
+  g.fillStyle = B.road; rr(g, 2, BAY_H - 2, 396, roadH + 2, 20); g.fill();
+  g.fillStyle = B.lot; rr(g, LOT.x, LOT.y, LOT.w, LOT.h, 12); g.fill();
+  g.save(); rr(g, LOT.x, LOT.y, LOT.w, LOT.h, 12); g.clip();
+  if (B.deco === 'lake') {
+    for (let i = 0; i < 16; i++) {
+      const x = LOT.x + 10 + rng() * (LOT.w - 20), y = LOT.y + 10 + rng() * (LOT.h - 20), r = 5 + rng() * 5;
+      g.fillStyle = '#4fbf6a'; g.beginPath(); g.arc(x, y, r, 0.4, TAU - 0.1); g.lineTo(x, y); g.fill();
+      if (rng() < 0.4) { g.fillStyle = '#ff9ed2'; circ(g, x + 1, y - 1, 2); g.fill(); }
+    }
+  } else if (B.deco === 'fields') {
+    g.fillStyle = 'rgba(255,255,255,0.09)';
+    for (let x = LOT.x; x < LOT.x + LOT.w; x += 40) g.fillRect(x, LOT.y, 20, LOT.h);
+  } else if (B.deco === 'fair') {
+    g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = 1;
+    for (let x = LOT.x; x < LOT.x + LOT.w; x += 34) { g.beginPath(); g.moveTo(x, LOT.y); g.lineTo(x, LOT.y + LOT.h); g.stroke(); }
+    for (let y = LOT.y; y < LOT.y + LOT.h; y += 34) { g.beginPath(); g.moveTo(LOT.x, y); g.lineTo(LOT.x + LOT.w, y); g.stroke(); }
+  } else if (B.deco === 'farm') {
+    g.strokeStyle = 'rgba(60,40,20,0.25)'; g.lineWidth = 3;
+    for (let k = -LOT.h; k < LOT.w; k += 16) { g.beginPath(); g.moveTo(LOT.x + k, LOT.y); g.lineTo(LOT.x + k + LOT.h * 0.4, LOT.y + LOT.h); g.stroke(); }
+  } else if (B.deco === 'snow') {
+    g.strokeStyle = 'rgba(150,180,220,0.35)'; g.lineWidth = 1.2;
+    for (let i = 0; i < 10; i++) { const x = LOT.x + rng() * LOT.w; g.beginPath(); g.moveTo(x, LOT.y); g.bezierCurveTo(x + 40, LOT.y + 120, x - 40, LOT.y + 240, x + 10, LOT.y + LOT.h); g.stroke(); }
+  }
+  g.restore();
+  if (B.deco === 'fair') {
+    // red and white bumper rail round the dodgem floor
+    const per = 2 * (LOT.w + LOT.h);
+    for (let s = 0; s < per; s += 8) {
+      let x, y;
+      if (s < LOT.w) { x = LOT.x + s; y = LOT.y; } else if (s < LOT.w + LOT.h) { x = LOT.x + LOT.w; y = LOT.y + s - LOT.w; }
+      else if (s < 2 * LOT.w + LOT.h) { x = LOT.x + LOT.w - (s - LOT.w - LOT.h); y = LOT.y + LOT.h; } else { x = LOT.x; y = LOT.y + LOT.h - (s - 2 * LOT.w - LOT.h); }
+      g.fillStyle = (s / 8) % 2 < 1 ? '#ff4d6d' : '#ffffff'; circ(g, x, y, 2.6); g.fill();
+    }
+  }
+  if (th === 'cable') {
+    // cables: one loop and a straight cable for each row of cars, with pylons
+    g.strokeStyle = '#3b3f52'; g.lineWidth = 1.6;
+    rr(g, RING.x, RING.y, RING.w, RING.h, 14); g.stroke();
+    g.beginPath(); g.moveTo(X0 - 10, RING.y); g.lineTo(X0 + W + 10, RING.y); g.stroke();
+    for (const t of (G && G.tracks) || []) { g.beginPath(); g.moveTo(RING.x, t.y); g.lineTo(RING.x + RING.w, t.y); g.stroke(); }
+    for (const [x, y] of [[RING.x, RING.y], [RING.x + RING.w, RING.y], [RING.x, RING.y + RING.h], [RING.x + RING.w, RING.y + RING.h]]) {
+      g.fillStyle = '#5d6378'; rr(g, x - 5, y - 5, 10, 10, 2); g.fill();
+    }
+  } else {
+    g.setLineDash(th === 'balloon' ? [3, 9] : [10, 10]); g.strokeStyle = B.line; g.lineWidth = 2;
+    rr(g, RING.x, RING.y, RING.w, RING.h, 14); g.stroke(); g.setLineDash([]);
+  }
+}
+
 function paintBg(g, th) {
   const V = view;
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -2079,7 +2237,8 @@ function paintBg(g, th) {
   const roadH = LOT.h + ROAD * 2;
   const outside = (x, y) => y > WORLD_BOTTOM - 4 || x < -2 || x > LW + 2 || y < qTop - 10;
 
-  if (th === 'bus') {
+  if (NEWBG[th]) paintNewWorld(g, th, { X0, Y0, W, H, qTop, rng, roadH, outside, V });
+  else if (th === 'bus' || th === 'taxi') {
     g.fillStyle = '#8fdc5e'; g.fillRect(X0, Y0, W, H);
     g.fillStyle = 'rgba(255,255,255,0.07)';
     for (let y = Math.floor(Y0 / 36) * 36; y < Y0 + H; y += 36) g.fillRect(X0, y, W, 18);
@@ -2279,6 +2438,12 @@ function paintBg(g, th) {
 
 const CIRCLE = {
   bus:   { path: '#f6cf98', edge: '#dea25c', island: '#8fdc5e', rope: '#ff5fa2' },
+  taxi:  { path: '#f6cf98', edge: '#dea25c', island: '#8fdc5e', rope: '#1d1d26' },
+  swan:  { path: '#d99a5b', edge: '#8a5526', island: '#7fd6f5', rope: '#8b5a2b' },
+  balloon: { path: '#f2e6c8', edge: '#c9a86a', island: '#9edc6a', rope: '#ff5fa2' },
+  dodgem: { path: '#ffd1e8', edge: '#ff5fa2', island: '#3a2468', rope: '#ffd23f' },
+  tractor: { path: '#e8d2a8', edge: '#b8915c', island: '#9bd45a', rope: '#8a5a2b' },
+  cable: { path: '#f3e2c7', edge: '#9b6a3c', island: '#ffffff', rope: '#3d6bff' },
   boat:  { path: '#d99a5b', edge: '#8a5526', island: '#38c8f4', rope: '#8b5a2b' },
   plane: { path: '#d6def2', edge: '#9aa8cc', island: '#b9ecff', rope: '#3d6bff' },
   train: { path: '#ead6ae', edge: '#c4a77a', island: '#a6e07a', rope: '#c45f1d' },
@@ -2452,6 +2617,11 @@ function drawLiveBg() {
       ctx.fillStyle = '#d99a5b'; rr(ctx, bx - bw / 2 - 3, 0, 6, 68, 3); ctx.fill();
       ctx.fillStyle = '#8a5526'; circ(ctx, bx - bw / 2, 68, 3.2); ctx.fill();
       if (i === n - 1) { ctx.fillStyle = '#d99a5b'; rr(ctx, bx + bw / 2 - 3, 0, 6, 68, 3); ctx.fill(); ctx.fillStyle = '#8a5526'; circ(ctx, bx + bw / 2, 68, 3.2); ctx.fill(); }
+    } else if (NEWBG[th] || th === 'taxi') {
+      const col = th === 'taxi' ? '#ffd23f' : th === 'cable' ? '#3b3f52' : th === 'dodgem' ? '#ffd23f' : 'rgba(255,255,255,0.8)';
+      ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(bx - bw / 2 + 5, 80); ctx.lineTo(bx - bw / 2 + 5, 5); ctx.lineTo(bx + bw / 2 - 5, 5); ctx.lineTo(bx + bw / 2 - 5, 80); ctx.stroke();
+      if (th === 'cable') { ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, RING.y); ctx.stroke(); }
     } else if (th === 'plane') {
       ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(bx, 14); ctx.lineTo(bx, 84); ctx.stroke();
@@ -2508,6 +2678,10 @@ function drawPerson(x, y, c, skin, hair, bob, scale) {
   ctx.beginPath(); ctx.ellipse(0, 1.5 + bob * 0.4, 5.4, 5.6, 0, 0, TAU); ctx.fill(); ctx.stroke();
   ctx.fillStyle = skin; circ(ctx, 0, -4 + bob, 3.8); ctx.fill();
   ctx.fillStyle = hair; ctx.beginPath(); ctx.arc(0, -4.6 + bob, 3.9, PI * 1.05, PI * 1.95); ctx.fill();
+  if (G && G.T.key === 'cable' && c !== PARTY) {
+    ctx.fillStyle = col.dark; ctx.beginPath(); ctx.arc(0, -4.8 + bob, 4, PI, TAU); ctx.fill();
+    ctx.fillStyle = '#ffffff'; circ(ctx, 0, -8.8 + bob, 1.6); ctx.fill();
+  }
   if (c === PARTY) {
     ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.moveTo(-2.5, -7.3 + bob); ctx.lineTo(2.5, -7.3 + bob); ctx.lineTo(0, -13 + bob); ctx.closePath(); ctx.fill();
   }
@@ -2520,7 +2694,8 @@ function drawQueue() {
   // the two feeder lines (back to front so the front is on top)
   G.lines.forEach((line, li) => {
     const slots = feeders[li].slots;
-    const n = Math.min(line.length, slots.length);
+    // when the line is longer than the space, the last spot shows a "+N" badge instead of a person
+    const n = line.length > slots.length ? slots.length - 1 : line.length;
     for (let i = n - 1; i >= 0; i--) {
       const p = line[i];
       let bob = p.moving ? Math.sin(p.walk * 18) * 1.2 : 0;
@@ -2600,7 +2775,11 @@ function planePaths(len, wid) {
 
 function silhouette(v) {
   const k = G.T.key, hl = v.len / 2, hw = v.wid / 2;
-  if (k === 'bus') rr(ctx, -hl, -hw, v.len, v.wid, 6);
+  if (k === 'bus' || k === 'taxi' || k === 'tractor') rr(ctx, -hl, -hw, v.len, v.wid, 6);
+  else if (k === 'swan') { ctx.beginPath(); ctx.ellipse(0, 0, hl, hw, 0, 0, TAU); }
+  else if (k === 'balloon') circ(ctx, 0, 0, hw);
+  else if (k === 'dodgem') rr(ctx, -hl, -hw, v.len, v.wid, hw);
+  else if (k === 'cable') rr(ctx, -hl, -hw, v.len, v.wid, 5);
   else if (k === 'train') rr(ctx, -hl, -hw, v.len, v.wid, 3);
   else if (k === 'boat') hullPath(hl, hw, v.wid * 0.9);
   else if (k === 'space') rocketBody(hl, hw);
@@ -2654,6 +2833,112 @@ function trainNosePath(x0, x1, hw) {
   ctx.lineTo(x0, -hw + 2.5);
   ctx.quadraticCurveTo(x0, -hw, x0 + 2.5, -hw);
   ctx.closePath();
+}
+
+function frontBeams(hl, hw) {
+  for (const sy of [-1, 1]) {
+    const beam = ctx.createLinearGradient(hl, 0, hl + 16, 0);
+    beam.addColorStop(0, 'rgba(255,245,160,0.55)'); beam.addColorStop(1, 'rgba(255,245,160,0)');
+    ctx.fillStyle = beam;
+    ctx.beginPath(); ctx.moveTo(hl - 1, sy * (hw - 3)); ctx.lineTo(hl + 16, sy * (hw + 2)); ctx.lineTo(hl + 16, sy * (hw - 11)); ctx.lineTo(hl - 1, sy * (hw - 7)); ctx.closePath(); ctx.fill();
+  }
+}
+function drawTaxi(v, col) {
+  const hl = v.len / 2, hw = v.wid / 2;
+  frontBeams(hl, hw);
+  ctx.fillStyle = col.dark; rr(ctx, -hl, -hw, v.len, v.wid, 7); ctx.fill();
+  ctx.fillStyle = col.main; rr(ctx, -hl + 1, -hw + 1, v.len - 2, v.wid - 3, 6); ctx.fill();
+  // chequered stripe down both sides
+  for (let x = -hl + 5, k = 0; x < hl - 6; x += 3, k++) {
+    ctx.fillStyle = k % 2 ? '#1d1d26' : '#ffffff';
+    ctx.fillRect(x, -hw + 1, 3, 1.6); ctx.fillRect(x, hw - 3.2, 3, 1.6);
+  }
+  ctx.fillStyle = '#23305e'; rr(ctx, hl - 12, -hw + 3, 6, v.wid - 7, 2.5); ctx.fill();
+  ctx.fillStyle = '#23305e'; rr(ctx, -hl + 2.5, -hw + 3.5, 4, v.wid - 8, 2); ctx.fill();
+  ctx.fillStyle = '#fff36b'; rr(ctx, hl - 2.4, -hw + 2.5, 2.4, 3.5, 1); ctx.fill(); rr(ctx, hl - 2.4, hw - 6.5, 2.4, 3.5, 1); ctx.fill();
+  ctx.fillStyle = '#2b2b3a'; ctx.fillRect(hl - 8, -hw - 2.5, 2.2, 3.5); ctx.fillRect(hl - 8, hw - 2, 2.2, 3.5);
+  drawSeats(v, -hl + 8, hl - 20, Math.min(5, hw - 5.5), 3);
+  // roof sign
+  ctx.fillStyle = '#fff6b0'; ctx.strokeStyle = '#1d1d26'; ctx.lineWidth = 0.8;
+  rr(ctx, hl - 18.5, -4, 4.5, 8, 1.2); ctx.fill(); ctx.stroke();
+}
+function drawSwan(v, col) {
+  const hl = v.len / 2, hw = v.wid / 2;
+  ctx.beginPath(); ctx.ellipse(0, 0, hl - 1, hw, 0, 0, TAU);
+  ctx.fillStyle = col.main; ctx.fill(); ctx.strokeStyle = col.dark; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(-2, 0, hl - 7, hw - 4.5, 0, 0, TAU); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fill();
+  // white wings along the sides
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  for (const sy of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(-hl + 6, sy * (hw - 1)); ctx.quadraticCurveTo(-2, sy * (hw + 2.5), hl * 0.4, sy * (hw - 1.5)); ctx.quadraticCurveTo(-2, sy * (hw - 2.5), -hl + 6, sy * (hw - 1)); ctx.fill();
+  }
+  drawSeats(v, -hl + 7, hl - 14, Math.min(5.4, hw - 6.5), 3.1);
+  // neck and head out front
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(hl - 10, 0); ctx.quadraticCurveTo(hl - 4, -4, hl - 1, 0); ctx.stroke();
+  ctx.fillStyle = '#ffffff'; circ(ctx, hl, 0, 4.2); ctx.fill();
+  ctx.fillStyle = '#ff8c1a'; ctx.beginPath(); ctx.moveTo(hl + 3, -1.6); ctx.lineTo(hl + 7.5, 0); ctx.lineTo(hl + 3, 1.6); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#1d1d26'; circ(ctx, hl + 1, -2, 0.8); ctx.fill(); circ(ctx, hl + 1, 2, 0.8); ctx.fill();
+}
+function drawBalloon(v, col) {
+  const r = v.wid / 2;
+  for (let k = 0; k < 10; k++) {
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, r, k * TAU / 10, (k + 1) * TAU / 10); ctx.closePath();
+    ctx.fillStyle = k % 2 ? col.light : col.main; ctx.fill();
+  }
+  circ(ctx, 0, 0, r); ctx.strokeStyle = col.dark; ctx.lineWidth = 1.5; ctx.stroke();
+  const hi = ctx.createRadialGradient(-r * 0.35, -r * 0.35, 1, 0, 0, r);
+  hi.addColorStop(0, 'rgba(255,255,255,0.55)'); hi.addColorStop(0.6, 'rgba(255,255,255,0)'); hi.addColorStop(1, 'rgba(0,0,0,0.15)');
+  ctx.fillStyle = hi; circ(ctx, 0, 0, r); ctx.fill();
+  // which way it will drift
+  ctx.fillStyle = '#ffffff'; ctx.strokeStyle = col.dark; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(r + 4, 0); ctx.lineTo(r - 4, -5); ctx.lineTo(r - 2, 0); ctx.lineTo(r - 4, 5); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // the basket in the middle with its passengers
+  ctx.fillStyle = 'rgba(120,80,40,0.85)'; rr(ctx, -r * 0.62, -r * 0.42, r * 1.24, r * 0.84, 3); ctx.fill();
+  drawSeats(v, -r * 0.55, r * 0.55, r * 0.2, Math.min(2.9, r * 0.15));
+}
+function drawDodgem(v, col) {
+  const hl = v.len / 2, hw = v.wid / 2;
+  frontBeams(hl, hw);
+  ctx.fillStyle = '#2b2b38'; rr(ctx, -hl, -hw, v.len, v.wid, hw); ctx.fill();
+  ctx.fillStyle = col.main; rr(ctx, -hl + 3, -hw + 3, v.len - 6, v.wid - 6, hw - 3); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.3)'; rr(ctx, hl - 12, -hw + 5, 7, v.wid - 10, 3); ctx.fill();
+  ctx.fillStyle = '#fff36b'; circ(ctx, hl - 2.5, -hw + 5, 1.5); ctx.fill(); circ(ctx, hl - 2.5, hw - 5, 1.5); ctx.fill();
+  drawSeats(v, -hl + 9, hl - 13, Math.min(5, hw - 6), 3);
+  // the pole at the back that reaches up to the ceiling grid
+  ctx.fillStyle = '#c0c4d4'; circ(ctx, -hl + 5, 0, 2.6); ctx.fill();
+  if (Math.sin(G.time * 23 + v.id) > 0.7) { ctx.fillStyle = '#fff36b'; circ(ctx, -hl + 5, 0, 1.6); ctx.fill(); }
+}
+function drawTractor(v, col) {
+  const hl = v.len / 2, hw = v.wid / 2, tl = 22, tx0 = hl - tl;
+  frontBeams(hl, hw - 2);
+  // trailer full of passengers
+  ctx.fillStyle = col.dark; rr(ctx, -hl, -hw + 1, v.len - tl - 3, v.wid - 2, 3); ctx.fill();
+  ctx.fillStyle = col.main; rr(ctx, -hl + 1, -hw + 2, v.len - tl - 5, v.wid - 4, 2.5); ctx.fill();
+  ctx.fillStyle = '#2b2b38'; ctx.fillRect(-hl + 4, -hw - 1, 7, 2.5); ctx.fillRect(-hl + 4, hw - 1.5, 7, 2.5);
+  ctx.strokeStyle = '#3b3b48'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(tx0 - 4, 0); ctx.lineTo(tx0 + 2, 0); ctx.stroke();
+  // tractor: big back wheels, small front wheels, cab and bonnet
+  ctx.fillStyle = '#2b2b38';
+  rr(ctx, tx0 + 1, -hw - 2, 10, 5, 2); ctx.fill(); rr(ctx, tx0 + 1, hw - 3, 10, 5, 2); ctx.fill();
+  rr(ctx, hl - 7, -hw + 0.5, 5, 3.5, 1.5); ctx.fill(); rr(ctx, hl - 7, hw - 4, 5, 3.5, 1.5); ctx.fill();
+  ctx.fillStyle = col.main; rr(ctx, tx0 + 9, -5, tl - 9, 10, 3); ctx.fill();
+  ctx.strokeStyle = col.dark; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = col.dark; rr(ctx, tx0 + 2, -hw + 3, 9, v.wid - 6, 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.85)'; rr(ctx, tx0 + 3, -hw + 4, 7, v.wid - 8, 1.5); ctx.fill();
+  ctx.fillStyle = '#3b3b48'; circ(ctx, tx0 + 13, -3, 1.4); ctx.fill();
+  ctx.fillStyle = '#fff36b'; circ(ctx, hl - 1, -3, 1.2); ctx.fill(); circ(ctx, hl - 1, 3, 1.2); ctx.fill();
+  drawSeats(v, -hl + 4, tx0 - 6, Math.min(5, hw - 5.5), 3);
+}
+function drawGondola(v, col) {
+  const hl = v.len / 2, hw = v.wid / 2;
+  frontBeams(hl, hw);
+  ctx.fillStyle = col.dark; rr(ctx, -hl, -hw, v.len, v.wid, 5); ctx.fill();
+  ctx.fillStyle = col.main; rr(ctx, -hl + 1, -hw + 1, v.len - 2, v.wid - 3, 4); ctx.fill();
+  ctx.fillStyle = 'rgba(190,235,255,0.7)'; rr(ctx, -hl + 3, -hw + 2.5, v.len - 6, 3, 1.5); ctx.fill(); rr(ctx, -hl + 3, hw - 6, v.len - 6, 3, 1.5); ctx.fill();
+  ctx.fillStyle = '#fff36b'; circ(ctx, hl - 2, -hw + 4, 1.3); ctx.fill(); circ(ctx, hl - 2, hw - 4, 1.3); ctx.fill();
+  drawSeats(v, -hl + 5, hl - 6, Math.min(5, hw - 6.5), 2.9);
+  // the grip that clamps onto the cable
+  ctx.fillStyle = '#3b3f52'; rr(ctx, -2.5, -hw - 1.5, 5, v.wid + 3, 1.5); ctx.fill();
 }
 
 function drawTrain(v, col) {
@@ -2833,7 +3118,8 @@ function drawVehicle(v) {
   if (v.state === 'full') sc = 1 + 0.08 * Math.sin((0.3 - v.fullT) * 30);
   if (v.revealT > 0) sc *= 1 + 0.3 * Math.sin((1 - v.revealT / 0.5) * PI);
   if (v.unlockT > 0) sc *= 1 + 0.2 * Math.sin((1 - v.unlockT / 0.5) * PI);
-  if ((k === 'plane' || k === 'space') && v.state === 'leaving') { sc = 1 + v.fly * 0.8; shOff = 4 + v.fly * 34; }
+  if ((k === 'plane' || G.T.depart === 'up') && v.state === 'leaving') { sc = 1 + v.fly * 0.8; shOff = 4 + v.fly * 34; }
+  if (k === 'cable' || k === 'balloon') shOff += 6; // hanging / floating above the ground
   if (v.appearT < 0.4) {
     if (v.appearT <= 0) return;
     sc *= easeBack(v.appearT / 0.4);
@@ -2861,6 +3147,12 @@ function drawVehicle(v) {
   ctx.rotate(v.ang + wob);
   if (v.revealed && v.color === PARTY) col = partyCol(k === 'plane' ? 0 : v.len / 2, k === 'plane' ? v.wid / 2 : 0);
   if (k === 'bus') drawBus(v, col);
+  else if (k === 'taxi') drawTaxi(v, col);
+  else if (k === 'swan') drawSwan(v, col);
+  else if (k === 'balloon') drawBalloon(v, col);
+  else if (k === 'dodgem') drawDodgem(v, col);
+  else if (k === 'tractor') drawTractor(v, col);
+  else if (k === 'cable') drawGondola(v, col);
   else if (k === 'boat') drawBoat(v, col);
   else if (k === 'train') drawTrain(v, col);
   else if (k === 'space') drawRocket(v, col);
@@ -2897,6 +3189,12 @@ function drawVehicle(v) {
 
 const GARAGE_STYLE = {
   bus:   { roof: '#ff9f43', dark: '#c4651a', door: '#4a3b5c' },
+  taxi:  { roof: '#ffd23f', dark: '#c99a00', door: '#3b3b4a' },
+  swan:  { roof: '#e7ad6e', dark: '#a8692f', door: '#5a3a1a' },
+  balloon: { roof: '#ff8fc8', dark: '#c2366f', door: '#5a2a4a' },
+  dodgem: { roof: '#9b5de5', dark: '#6a2fb8', door: '#2a1450' },
+  tractor: { roof: '#c0392b', dark: '#7d241b', door: '#5a3a1a' },
+  cable: { roof: '#9aa3ba', dark: '#5d6378', door: '#2b2b38' },
   boat:  { roof: '#e7ad6e', dark: '#a8692f', door: '#5a3a1a' },
   plane: { roof: '#d5dbe8', dark: '#8e97ad', door: '#4a4f63' },
   train: { roof: '#c46a4a', dark: '#8a4630', door: '#3b2a24' },
@@ -2970,6 +3268,41 @@ function drawGarage(g) {
     circ(ctx, bx + 8, by - 8, 4.5); ctx.fill();
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
   }
+}
+
+function drawDrifter(a) {
+  const kind = G.T.drifter;
+  if (kind === 'duck') drawDuck(a);
+  else if (kind === 'bird') drawGeese(a);
+  else drawAsteroid(a);
+}
+function drawDuck(a) {
+  const ang = Math.atan2(a.vy, a.vx), t = G.time;
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.2;
+  for (let k = 0; k < 2; k++) { const r = a.r * (0.9 + ((t * 0.8 + k * 0.5) % 1) * 0.7); circ(ctx, a.x, a.y, r); ctx.stroke(); }
+  ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(ang);
+  ctx.fillStyle = '#8a6a4a'; ctx.beginPath(); ctx.ellipse(-1, 0, a.r * 0.75, a.r * 0.5, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#a8845c'; ctx.beginPath(); ctx.ellipse(-3, 0, a.r * 0.45, a.r * 0.32, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#2e8b57'; circ(ctx, a.r * 0.55, 0, a.r * 0.3); ctx.fill();
+  ctx.fillStyle = '#ffb02e'; ctx.beginPath(); ctx.moveTo(a.r * 0.8, -2); ctx.lineTo(a.r * 1.05, 0); ctx.lineTo(a.r * 0.8, 2); ctx.fill();
+  ctx.fillStyle = '#111'; circ(ctx, a.r * 0.6, -1.6, 0.8); ctx.fill(); circ(ctx, a.r * 0.6, 1.6, 0.8); ctx.fill();
+  ctx.restore();
+}
+function drawGeese(a) {
+  const ang = Math.atan2(a.vy, a.vx), flap = Math.sin(G.time * 9) * 0.5;
+  const birds = [[a.r * 0.5, 0], [-a.r * 0.3, -a.r * 0.6], [-a.r * 0.3, a.r * 0.6]];
+  ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(ang);
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  for (const [bx, by] of birds) { ctx.beginPath(); ctx.ellipse(bx + 10, by + 16, 5, 2.5, 0, 0, TAU); ctx.fill(); }
+  for (const [bx, by] of birds) {
+    ctx.fillStyle = '#f4f4f0'; ctx.strokeStyle = '#8a8f9e'; ctx.lineWidth = 0.8;
+    for (const sd of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(bx + 1, by); ctx.quadraticCurveTo(bx - 2, by + sd * (6 + flap * 3), bx - 5, by + sd * (8 + flap * 4)); ctx.lineTo(bx - 3, by); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(bx, by, 4.5, 1.8, 0, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ff9f43'; ctx.fillRect(bx + 4, by - 0.6, 2, 1.2);
+  }
+  ctx.restore();
 }
 
 function drawAsteroid(a) {
@@ -3122,7 +3455,7 @@ function render() {
   for (const v of G.vehicles) if (v.state === 'emerging') drawVehicle(v);
   for (const g of G.garages) drawGarage(g);
   for (const v of G.vehicles) if (v.state === 'lot' || v.state === 'bump' || v.state === 'runaway') drawVehicle(v);
-  for (const a of G.asteroids) if (a.active) drawAsteroid(a);
+  for (const a of G.asteroids) if (a.active) drawDrifter(a);
   for (const w of G.wrecks) drawWreck(w);
   for (const v of G.vehicles) if (v.state === 'bay' || v.state === 'full') drawVehicle(v);
   for (const v of G.vehicles) if (v.state === 'moving' && !v.lift) drawVehicle(v);
@@ -3308,8 +3641,9 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
   if (!$('menu').classList.contains('hidden')) setTimeout(() => Music.start(), 60);
 }, { passive: true }));
 document.addEventListener('dblclick', (e) => e.preventDefault());
+window.addEventListener('pagehide', () => persist());
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) Snd.sleep();
+  if (document.hidden) { Snd.sleep(); persist(); }
   if (document.hidden && G && G.state === 'play' && !G.paused && $('modal').classList.contains('hidden')) pauseGame();
 });
 
