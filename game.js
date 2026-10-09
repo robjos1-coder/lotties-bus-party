@@ -251,6 +251,10 @@ function gateOut(li) {
 
 function bayW() { const n = G ? G.bays.length : 5; return Math.min(76, 384 / n); }
 function bayPos(i) { const n = G.bays.length; return [LW / 2 + (i - (n - 1) / 2) * bayW(), BAY_CY]; }
+// parked vehicles pull right up to the jetty / kerb / gate, so passengers step straight on
+function bayY(v) { return 7 + v.len / 2; }
+// where passengers get on: the front end of a parked vehicle
+function doorPos(v) { return [v.x, v.y - v.len / 2 + 5]; }
 
 /* --------------------------------------------------------- collision (SAT) */
 function boxOf(v, pad = 0) { return { cx: v.x, cy: v.y, ang: v.ang, hl: v.len / 2 + pad, hw: v.wid / 2 + pad }; }
@@ -884,7 +888,7 @@ function liftVehicle(v, i) {
   pay('lift');
   G.bays[i] = v;
   v.bay = i; v.state = 'moving'; v.lift = true; v.lock = 0; v.revealed = true;
-  v.path = [bayPos(i)]; v.pi = 0; v.speed = 60; v.maxSpeed = 360; v.tang = v.ang;
+  v.path = [[bayPos(i)[0], bayY(v)]]; v.pi = 0; v.speed = 60; v.maxSpeed = 360; v.tang = v.ang;
   sfx.lift();
   sparkles(v.x, v.y, '#ffffff', 14);
   lotChanged();
@@ -1020,7 +1024,7 @@ function ringPath(v, i) {
   const near = [Math.abs(E[1] - R.y), Math.abs(E[0] - (R.x + R.w)), Math.abs(E[1] - (R.y + R.h)), Math.abs(E[0] - R.x)];
   const edge = near.indexOf(Math.min(...near));
   if (edge === 0) E[1] = R.y; else if (edge === 1) E[0] = R.x + R.w; else if (edge === 2) E[1] = R.y + R.h; else E[0] = R.x;
-  const [bx, by] = bayPos(i);
+  const bx = bayPos(i)[0], by = bayY(v);
   const Tp = [bx, R.y];
   const P = 2 * (R.w + R.h);
   const perimS = ([x, y], e) => {
@@ -1248,7 +1252,7 @@ function updateVehicle(v, dt) {
     case 'moving': {
       v.speed = Math.min(v.maxSpeed, v.speed + dt * 1500);
       const n = v.path.length;
-      const [bx, by] = bayPos(v.bay);
+      const bx = bayPos(v.bay)[0], by = bayY(v);
       if (v.lift) v.path[n - 1] = [bx, by];
       else if (v.pathBx !== bx) {
         // the bays moved (extra bay): slide the end of the route across
@@ -1262,7 +1266,7 @@ function updateVehicle(v, dt) {
       break;
     }
     case 'bay': {
-      const [bx, by] = bayPos(v.bay);
+      const bx = bayPos(v.bay)[0], by = bayY(v);
       const k = Math.min(1, dt * 10);
       v.x += (bx - v.x) * k; v.y += (by - v.y) * k;
       v.ang += angDiff(v.ang, -PI / 2) * Math.min(1, dt * 12);
@@ -1392,7 +1396,7 @@ function update(dt) {
       const ahead = (ring.exitS - podS(i) + ring.P) % ring.P;
       if (p.leaving && (ahead <= step + 1 || ahead > ring.P - 3)) {
         G.pods[i] = null;
-        G.walkers.push({ p, v: p.leaving, via: [ring.exitOut.slice()] });
+        G.walkers.push({ p, v: p.leaving, stage: 0 });
         p.leaving = null;
       }
     }
@@ -1421,14 +1425,16 @@ function update(dt) {
   for (let i = G.walkers.length - 1; i >= 0; i--) {
     const w = G.walkers[i], p = w.p, v = w.v;
     p.walk += dt;
-    if (w.via && w.via.length) {
-      const [tx, ty] = w.via[0];
+    if (w.stage < 2) {
+      // stay on dry land: down the exit path, then along the edge to the right berth
+      const [tx, ty] = w.stage === 0 ? ring.exitOut : [v.x, ring.exitOut[1]];
       const ddx = tx - p.x, ddy = ty - p.y, dd = Math.hypot(ddx, ddy);
-      if (dd <= wsp) { p.x = tx; p.y = ty; w.via.shift(); w.sx = p.x; w.sy = p.y; w.D = 0; }
+      if (dd <= wsp) { p.x = tx; p.y = ty; w.stage++; w.sx = p.x; w.sy = p.y; w.D = 0; }
       else { p.x += ddx / dd * wsp; p.y += ddy / dd * wsp; }
       continue;
     }
-    const dx = v.x - p.x, dy = v.y - p.y, dist = Math.hypot(dx, dy);
+    const [doorX, doorY] = doorPos(v);
+    const dx = doorX - p.x, dy = doorY - p.y, dist = Math.hypot(dx, dy);
     if (dist <= wsp + 3) {
       G.walkers.splice(i, 1);
       v.incoming--; v.filled++; v.pulse = 1;
@@ -2395,9 +2401,10 @@ function drawWreck(w) {
 
 function drawWalker(w) {
   const p = w.p;
-  if (w.via && w.via.length) { drawPerson(p.x, p.y, p.c, p.skin, p.hair, Math.sin(p.walk * 18) * 1.2, 1); return; }
-  if (!w.D) w.D = Math.max(1, Math.hypot(w.v.x - w.sx, w.v.y - w.sy));
-  const t = clamp(1 - Math.hypot(w.v.x - p.x, w.v.y - p.y) / w.D, 0, 1);
+  if (w.stage < 2) { drawPerson(p.x, p.y, p.c, p.skin, p.hair, Math.sin(p.walk * 18) * 1.2, 1); return; }
+  const [doorX, doorY] = doorPos(w.v);
+  if (!w.D) w.D = Math.max(1, Math.hypot(doorX - w.sx, doorY - w.sy));
+  const t = clamp(1 - Math.hypot(doorX - p.x, doorY - p.y) / w.D, 0, 1);
   const hop = Math.abs(Math.sin(t * PI * 2)) * 6;
   ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 6, 4.5 - hop * 0.3, 2, 0, 0, TAU); ctx.fill();
   drawPerson(p.x, p.y - hop, p.c, p.skin, p.hair, 0, 1);
