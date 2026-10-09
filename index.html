@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Lottie's Bus Party</title>
+<meta name="description" content="Tap buses, boats and planes out of the jam and get every passenger to the party!">
+<meta name="theme-color" content="#7b4dff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lottie's Bus">
+<meta name="format-detection" content="telephone=no">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <button id="btnPause" class="hbtn" aria-label="Pause">&#9776;</button>
+  <div class="hcenter">
+    <div id="lvlTitle">Level 1</div>
+    <div id="worldName">City Streets</div>
+    <div id="fever"><div id="feverFill"></div><span>PARTY METER</span></div>
+  </div>
+  <div id="coins" class="pill">🪙 <span id="coinTxt">0</span></div>
+</div>
+
+<div id="boosters">
+  <button class="boost" id="b_bay"><span class="bi">🅿️</span><span class="bl">+1 Bay</span><span class="badge" id="n_bay">0</span></button>
+  <button class="boost" id="b_lift"><span class="bi" id="liftIcon">🚁</span><span class="bl" id="liftLbl">Heli-Lift</span><span class="badge" id="n_lift">0</span></button>
+  <button class="boost" id="b_sort"><span class="bi">✨</span><span class="bl">Sort Queue</span><span class="badge" id="n_sort">0</span></button>
+</div>
+
+<div id="toast"></div>
+
+<div id="modal" class="hidden"><div class="card" id="modalCard"></div></div>
+
+<div id="menu">
+  <div class="menu-inner">
+    <div class="logo">
+      <div class="logo-top">Lottie's</div>
+      <div class="logo-main"><span>B</span><span>U</span><span>S</span> <span>P</span><span>A</span><span>R</span><span>T</span><span>Y</span></div>
+      <div class="logo-vehicles"><span>🚌</span><span>⛵</span><span>✈️</span></div>
+    </div>
+    <button class="btn big" id="btnPlay">▶ Play<small id="playLvl">Level 1</small></button>
+    <div class="row">
+      <button class="btn alt" id="btnLevels">🗺️ Levels</button>
+      <button class="btn alt" id="btnSound">🔊 Sound</button>
+    </div>
+    <div class="menu-coins">🪙 <span id="menuCoins">0</span></div>
+    <div id="installHint" class="hidden">Install it: tap <b>Share</b> <span class="share">⬆︎</span> then <b>Add to Home Screen</b></div>
+  </div>
+</div>
+
+<script src="game.js"></script>
+<script>
+  if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
+</body>
+</html>
