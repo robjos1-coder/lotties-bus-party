@@ -696,6 +696,7 @@ const Snd = {
     }
   },
   sleep() {
+    Music.stop();
     if (this.el && !this.el.paused) this.el.pause();
     if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
   },
@@ -796,6 +797,136 @@ function partyBeat(k) {
   Snd.tone(semi(110, BASS[k % 16]), 0.17, 'triangle', 0.08);
   if (k % 8 === 6) Snd.tone(semi(880, BASS[k % 16] % 12), 0.1, 'square', 0.025);
 }
+/* --------------------------------------------------- menu theme: an original chiptune loop
+   104 BPM in G major: pulse-wave lead, arpeggios, triangle bass and noise drums. */
+const SONG = (() => {
+  const STEP = 60 / 104 / 4; // one sixteenth note
+  const CHORD = { G: [67, 71, 74], Em: [64, 67, 71], C: [60, 64, 67], D: [62, 66, 69], Bm: [59, 62, 66] };
+  const ROOT = { G: 43, Em: 40, C: 36, D: 38, Bm: 35 };
+  const bars = [
+    // intro: arpeggios and bass only
+    ['G', []], ['D', []],
+    // verse
+    ['G', [[74, 4], [71, 2], [74, 2], [79, 4], [78, 2], [76, 2]]],
+    ['Em', [[76, 4], [74, 2], [71, 2], [67, 6], [0, 2]]],
+    ['C', [[72, 2], [76, 2], [79, 4], [76, 2], [72, 2], [74, 2], [76, 2]]],
+    ['D', [[74, 6], [69, 2], [78, 4], [74, 4]]],
+    ['G', [[79, 4], [78, 2], [79, 2], [81, 4], [79, 2], [78, 2]]],
+    ['Em', [[76, 4], [79, 2], [76, 2], [71, 4], [74, 4]]],
+    ['C', [[72, 2], [74, 2], [76, 2], [79, 2], [76, 4], [72, 4]]],
+    ['D', [[74, 4], [76, 2], [78, 2], [81, 8]]],
+    // lift
+    ['C', [[76, 2], [76, 2], [79, 2], [76, 2], [84, 4], [83, 2], [81, 2]]],
+    ['D', [[81, 4], [78, 2], [81, 2], [74, 8]]],
+    ['Bm', [[71, 2], [74, 2], [78, 2], [83, 2], [81, 4], [78, 4]]],
+    ['Em', [[79, 4], [76, 4], [71, 4], [76, 4]]],
+    ['C', [[72, 2], [76, 2], [79, 2], [84, 2], [83, 2], [79, 2], [76, 4]]],
+    ['D', [[78, 2], [81, 2], [86, 4], [84, 2], [81, 2], [78, 4]]],
+    ['G', [[79, 6], [83, 2], [86, 4], [83, 4]]],
+    ['G', [[79, 12], [0, 4]]],
+  ];
+  const steps = [];
+  bars.forEach(([ch, mel], b) => {
+    const base = b * 16;
+    for (let i = 0; i < 16; i++) steps[base + i] = { chord: ch, root: ROOT[ch], arp: (CHORD[ch].concat([CHORD[ch][0] + 12]))[i % 4], notes: [] };
+    let at = 0;
+    for (const [n, len] of mel) { if (n) steps[base + at].notes.push([n, len]); at += len; }
+  });
+  return { STEP, steps, loopStart: 2 * 16 };
+})();
+const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+const Music = {
+  on: false, timer: null, gain: null, step: 0, next: 0, pulseWave: null,
+  ready() { return save.sound && Snd.ctx && Snd.ctx.state === 'running'; },
+  start() {
+    if (this.on || !this.ready()) return;
+    const c = Snd.ctx;
+    if (!this.pulseWave) {
+      // 25% duty pulse wave: the classic chiptune lead sound
+      const N = 32, re = new Float32Array(N), im = new Float32Array(N);
+      for (let k = 1; k < N; k++) im[k] = (2 / (k * PI)) * Math.sin(k * PI * 0.25);
+      this.pulseWave = c.createPeriodicWave(re, im);
+    }
+    this.gain = c.createGain();
+    this.gain.gain.setValueAtTime(0.0001, c.currentTime);
+    this.gain.gain.exponentialRampToValueAtTime(0.7, c.currentTime + 0.6);
+    this.gain.connect(Snd.master);
+    this.on = true; this.step = 0; this.next = c.currentTime + 0.1;
+    this.timer = setInterval(() => this.tick(), 25);
+  },
+  stop() {
+    if (!this.on) return;
+    this.on = false;
+    clearInterval(this.timer);
+    const g = this.gain, c = Snd.ctx;
+    if (g && c) {
+      g.gain.cancelScheduledValues(c.currentTime);
+      g.gain.setValueAtTime(g.gain.value || 0.0001, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + 0.35);
+      setTimeout(() => { try { g.disconnect(); } catch (e) { /* ignore */ } }, 500);
+    }
+  },
+  tick() {
+    if (!this.ready()) { this.stop(); return; }
+    const c = Snd.ctx;
+    if (this.next < c.currentTime - 0.2) this.next = c.currentTime + 0.05; // woke up after a pause
+    while (this.next < c.currentTime + 0.15) {
+      this.play(SONG.steps[this.step], this.next, this.step % 16);
+      this.next += SONG.STEP;
+      if (++this.step >= SONG.steps.length) this.step = SONG.loopStart;
+    }
+  },
+  voice(type, freq, t, dur, vol) {
+    const c = Snd.ctx, o = c.createOscillator(), g = c.createGain();
+    if (type === 'pulse') o.setPeriodicWave(this.pulseWave); else o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
+    g.gain.setValueAtTime(vol, t + Math.max(0.01, dur - 0.03));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(this.gain);
+    o.start(t); o.stop(t + dur + 0.02);
+  },
+  drum(kind, t) {
+    const c = Snd.ctx;
+    if (kind === 'kick') {
+      const o = c.createOscillator(), g = c.createGain();
+      o.frequency.setValueAtTime(160, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+      g.gain.setValueAtTime(0.3, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+      o.connect(g); g.connect(this.gain); o.start(t); o.stop(t + 0.16);
+      return;
+    }
+    if (!Snd.nb) {
+      Snd.nb = c.createBuffer(1, c.sampleRate, c.sampleRate);
+      const ch = Snd.nb.getChannelData(0);
+      for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+    }
+    const src = c.createBufferSource(); src.buffer = Snd.nb;
+    const f = c.createBiquadFilter(), g = c.createGain();
+    const snare = kind === 'snare', d = snare ? 0.12 : 0.035;
+    f.type = snare ? 'bandpass' : 'highpass'; f.frequency.value = snare ? 1800 : 7000;
+    g.gain.setValueAtTime(snare ? 0.16 : 0.05, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    src.connect(f); f.connect(g); g.connect(this.gain);
+    src.start(t, Math.random() * 0.5); src.stop(t + d + 0.02);
+  },
+  play(st, t, i) {
+    const S = SONG.STEP;
+    for (const [n, len] of st.notes) {
+      this.voice('pulse', midiHz(n), t, len * S * 0.95, 0.06);
+      this.voice('square', midiHz(n) * 1.004, t, len * S * 0.9, 0.012); // slight detune for a fuller sound
+    }
+    this.voice('pulse', midiHz(st.arp), t, S * 0.8, 0.018);
+    if (i % 2 === 0) {
+      const bassPat = [0, 0, 7, 0, 12, 0, 7, 0];
+      this.voice('triangle', midiHz(st.root + bassPat[(i / 2) | 0]), t, S * 1.8, 0.16);
+    }
+    if (i === 0 || i === 8 || i === 10) this.drum('kick', t);
+    if (i === 4 || i === 12) this.drum('snare', t);
+    if (i % 2 === 1) this.drum('hat', t);
+  },
+};
+
 function buzz(p) { if (save.vib && navigator.vibrate) { try { navigator.vibrate(p); } catch (e) { /* ignore */ } } }
 
 /* ------------------------------------------------------------ game state */
@@ -3120,10 +3251,11 @@ function showMenu() {
   hideModal();
   $('menu').classList.remove('hidden');
   if (G) G.paused = true;
+  Music.start();
   $('playLvl').textContent = `Level ${save.maxLevel} · ${THEMES[levelConfig(save.maxLevel).theme].emoji} ${THEMES[levelConfig(save.maxLevel).theme].world}`;
   refreshHUD();
 }
-function hideMenu() { $('menu').classList.add('hidden'); }
+function hideMenu() { $('menu').classList.add('hidden'); Music.stop(); }
 
 function showLevels() {
   const worlds = Math.max(THEME_ORDER.length, Math.ceil((save.maxLevel + 1) / 5));
@@ -3170,7 +3302,11 @@ document.addEventListener('touchmove', (e) => {
   if (!e.target.closest || !e.target.closest('.card')) e.preventDefault();
 }, { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
-['touchend', 'click', 'keydown'].forEach((ev) => document.addEventListener(ev, () => Snd.unlock(), { passive: true }));
+['touchend', 'click', 'keydown'].forEach((ev) => document.addEventListener(ev, () => {
+  Snd.unlock();
+  // the menu theme starts on the first tap (browsers won't play sound before one)
+  if (!$('menu').classList.contains('hidden')) setTimeout(() => Music.start(), 60);
+}, { passive: true }));
 document.addEventListener('dblclick', (e) => e.preventDefault());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) Snd.sleep();
