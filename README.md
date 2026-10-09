@@ -1,4 +1,4 @@
-# 🚌 Lottie's Bus Party ⛵✈️
+# 🚌 Lottie's Bus Party ⛵✈️🚂🚀
 
 A bright, tap-to-play traffic-jam puzzle for your phone, in the style of Bus Fever / Bus Jam.
 
@@ -6,22 +6,26 @@ A bright, tap-to-play traffic-jam puzzle for your phone, in the style of Bus Fev
 
 ## How to play
 - **Tap** a vehicle to drive it out of the lot. It only moves if **nothing is in its way**. Tap a blocked one and it bumps (and costs you a star).
-- Vehicles drive round to the bays at the top. Passengers at the front of the queue hop onto vehicles of **their colour**.
-- Full vehicles drive off (or take off!). Don't fill every bay with the wrong colours, or it's a **Traffic Jam**.
+- Vehicles drive round to the bays at the top.
+- Passengers ride the **party carousel 🎠** and hop onto vehicles of **their colour**. More people wait in line to get on.
+- Full vehicles drive off, sail away, take off down the runway or blast into space!
+- If every bay fills up with colours nobody on the carousel wants, it's a **Traffic Jam**.
 
 ## Worlds
 | Levels | World | Twist |
 |---|---|---|
-| 1–5 | 🚌 City Streets | Classic buses |
-| 6–10 | ⛵ Sunny Harbour | Boats sail round the jetty. **Mystery boats** hide their colour until they have a clear way out |
-| 11–15 | ✈️ Sky Airport | Planes taxi round the airport and take off. **Refuelling planes** stay locked until enough others have flown |
-| 16+ | Remix worlds | Everything mixed together, harder every level |
+| 1–5 | 🚌 City Streets | Bus depots 🏠: buses come out one at a time, only when the spot in front of the door is clear |
+| 6–10 | ⛵ Sunny Harbour | Mystery boats 🎁 hide their colour until they have a clear way out |
+| 11–15 | ✈️ Sky Airport | Refuelling planes ⛽ stay locked until enough others have flown. Planes taxi to the runway to take off |
+| 16–20 | 🚂 Rail Yard | Trains wait nose-to-tail on sidings. Only the end train can leave, so the order really matters |
+| 21–25 | 🚀 Star Port | The hardest world: only 4 docking ports, drifting asteroids ☄️ that block launches, plus mystery and charging rockets |
+| 26+ | Remix worlds | Everything mixed together, harder every level |
 
 Every 5th level is a **🎉 Party Level** with a rainbow Party vehicle. Fill it to start a party.
 
 ## Extra features
-- **Party meter:** send vehicles off quickly to fill it. A full meter starts **PARTY TIME**, with disco lights, faster passengers and double coins.
-- **Boosters:** 🅿️ Extra Bay, 🚁 Heli-Lift / 🏗️ Crane / 🚜 Tow (lift any vehicle out), ✨ Sort Queue
+- **Party meter:** send vehicles off quickly to fill it. A full meter starts **PARTY TIME**, with disco lights, music, faster passengers and double coins.
+- **Boosters:** 🅿️ Extra Bay, a lift (🚁 Heli-Lift / 🏗️ Crane / 🚜 Tow / 🛸 Tractor Beam) that pulls any vehicle out, and ✨ Sort Queue
 - Levels are generated endlessly, and each one is built so it can be solved.
 - Stars, coins and progress are saved on your device.
 

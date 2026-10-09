@@ -10,6 +10,7 @@ const ctx = canvas.getContext('2d');
 const TAU = Math.PI * 2, PI = Math.PI;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+const easeBack = (t) => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
 const rand = (a, b) => a + Math.random() * (b - a);
 const pick = (arr) => arr[(Math.random() * arr.length) | 0];
 
@@ -81,43 +82,65 @@ const HAIR = ['#3b2a20', '#1d1d1d', '#8a4b20', '#e8b84e', '#c24a2a', '#6b4b9e', 
 /* ---------------------------------------------------------------- themes */
 const THEMES = {
   bus: {
-    key: 'bus', world: 'City Streets', noun: 'bus', plural: 'buses', emoji: '🚌',
-    lift: ['🚁', 'Heli-Lift'], lockName: 'Wheel-clamped', lockIcon: '🔒',
+    key: 'bus', world: 'City Streets', noun: 'bus', plural: 'buses', emoji: '🚌', depart: 'road',
+    lift: ['🚁', 'Heli-Lift'], lockName: 'Wheel-clamped', lockIcon: '🔒', garage: 'bus depot',
     sizes: { 4: [42, 24], 6: [54, 25], 10: [70, 27] }, maxN: 32,
   },
   boat: {
-    key: 'boat', world: 'Sunny Harbour', noun: 'boat', plural: 'boats', emoji: '⛵',
-    lift: ['🏗️', 'Crane'], lockName: 'Still moored', lockIcon: '⚓',
+    key: 'boat', world: 'Sunny Harbour', noun: 'boat', plural: 'boats', emoji: '⛵', depart: 'road',
+    lift: ['🏗️', 'Crane'], lockName: 'Still moored', lockIcon: '⚓', garage: 'boathouse',
     sizes: { 4: [42, 24], 6: [54, 26], 10: [68, 28] }, maxN: 30,
   },
   plane: {
-    key: 'plane', world: 'Sky Airport', noun: 'plane', plural: 'planes', emoji: '✈️',
-    lift: ['🚜', 'Tow'], lockName: 'Refuelling', lockIcon: '⛽',
+    key: 'plane', world: 'Sky Airport', noun: 'plane', plural: 'planes', emoji: '✈️', depart: 'runway',
+    lift: ['🚜', 'Tow'], lockName: 'Refuelling', lockIcon: '⛽', garage: 'hangar',
     sizes: { 4: [40, 34], 6: [50, 38], 10: [62, 44] }, maxN: 24,
   },
+  train: {
+    key: 'train', world: 'Rail Yard', noun: 'train', plural: 'trains', emoji: '🚂', depart: 'road',
+    lift: ['🏗️', 'Crane'], lockName: 'Red signal', lockIcon: '🚦', garage: 'engine shed',
+    sizes: { 4: [44, 18], 6: [60, 18], 10: [80, 18] }, maxN: 26,
+  },
+  space: {
+    key: 'space', world: 'Star Port', noun: 'rocket', plural: 'rockets', emoji: '🚀', depart: 'up',
+    lift: ['🛸', 'Tractor Beam'], lockName: 'Charging', lockIcon: '🔋', garage: 'launch silo',
+    sizes: { 4: [40, 22], 6: [48, 24], 10: [60, 28] }, maxN: 26,
+  },
 };
-const THEME_ORDER = ['bus', 'boat', 'plane'];
+const THEME_ORDER = ['bus', 'boat', 'plane', 'train', 'space'];
 const PRICE = { bay: 60, lift: 45, sort: 30 };
 const MAX_BAYS = 7;
 
-/* Difficulty curve: 5 levels per world, worlds cycle City -> Harbour -> Airport,
- * every 5th level is a Party level with a golden Party vehicle. */
+/* Difficulty curve: 5 levels per world, worlds go City -> Harbour -> Airport -> Rail Yard ->
+ * Star Port, then repeat as harder remixes. Every 5th level is a Party level. */
 function levelConfig(L) {
   const wi = Math.floor((L - 1) / 5);
-  const theme = THEME_ORDER[wi % 3];
-  const cycle = Math.floor(wi / 3);
+  const theme = THEME_ORDER[wi % THEME_ORDER.length];
+  const cycle = Math.floor(wi / THEME_ORDER.length);
   const stage = (L - 1) % 5;
   const party = stage === 4;
   const T = THEMES[theme];
+  const space = theme === 'space';
+  const bays = space ? 4 : 5;
   const n = Math.min(T.maxN, Math.round(7 + L * 0.85 + (party ? 3 : 0)));
   const colors = Math.min(8, 3 + Math.floor((L + 1) / 4));
-  let open = L <= 3 ? 3 : 4;
-  if ((L > 20 && party) || (L > 35 && L % 2 === 1)) open = 5;
-  const stick = clamp(0.85 - L * 0.025, 0.25, 0.85);
-  const mysteryFrac = (theme === 'boat' || cycle > 0) ? clamp(0.12 + cycle * 0.08 + stage * 0.03, 0, 0.4) : 0;
-  const lockCount = (theme === 'plane' || cycle > 0) ? Math.min(7, 1 + stage + cycle * 2) : 0;
+  let open = L <= 3 ? 3 : bays - 1;
+  if ((cycle > 0 && party) || (L > 45 && L % 2 === 1)) open = bays;
+  const stick = clamp(0.8 - L * 0.035, 0.2, 0.8);
+  const mysteryFrac = (theme === 'boat' || space || cycle > 0) ? clamp(0.12 + cycle * 0.08 + stage * 0.03 + (space ? 0.08 : 0), 0, 0.4) : 0;
+  const lockCount = (theme === 'plane' || space || cycle > 0) ? Math.min(7, 1 + stage + cycle * 2) : 0;
+  let garages = 0;
+  if (theme === 'bus') garages = L >= 3 ? (stage >= 3 ? 2 : 1) : 0;
+  else if (theme === 'plane' || space) garages = 1;
+  if (cycle > 0 && theme !== 'train') garages = 2;
+  const garageSize = 2 + Math.min(3, Math.floor(L / 8));
+  const asteroids = space ? Math.min(5, 2 + Math.floor(stage / 2) + cycle) : 0;
   const capW = L <= 3 ? { 4: 0.55, 6: 0.45, 10: 0 } : L <= 10 ? { 4: 0.35, 6: 0.45, 10: 0.2 } : { 4: 0.25, 6: 0.42, 10: 0.33 };
-  return { L, theme, cycle, stage, party, n, colors, open, stick, diag: L >= 4, mysteryFrac, lockCount, capW, bays: 5, world: wi + 1 };
+  const pods = clamp(24 - Math.floor(L / 2), 12, 24); // carousel seats: fewer riders = less choice
+  return {
+    L, theme, cycle, stage, party, n, colors, open, stick, pods, bays, garages, garageSize, asteroids,
+    diag: L >= 4 && theme !== 'train', mysteryFrac, lockCount, capW, world: wi + 1,
+  };
 }
 
 /* --------------------------------------------------------- world geometry */
@@ -128,15 +151,22 @@ const WORLD_BOTTOM = LOT.y + LOT.h + ROAD + 8;
 const BAY_CY = BAY_H / 2 + 2;
 
 let view = null;
-let queueSlots = [], queueRows = null;
+let queueSlots = [];   // waiting-line spots (index 0 = next to join the carousel)
+let ring = null;       // carousel track geometry (stadium centreline)
+
+let lastLayoutKey = '';
+function layoutKey() {
+  return [canvas.clientWidth, canvas.clientHeight, Math.round($('hud').getBoundingClientRect().bottom), Math.round($('boosters').getBoundingClientRect().top)].join(',');
+}
 
 function computeLayout() {
-  const cssW = window.innerWidth, cssH = window.innerHeight;
+  lastLayoutKey = layoutKey();
+  // Measure the real on-screen size of the full-screen canvas: on iOS home-screen apps
+  // innerHeight and the safe-area insets can be wrong at launch and settle later.
+  const cssW = canvas.clientWidth || window.innerWidth, cssH = canvas.clientHeight || window.innerHeight;
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   canvas.width = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);
-  canvas.style.width = cssW + 'px';
-  canvas.style.height = cssH + 'px';
   const top = $('hud').getBoundingClientRect().bottom + 4;
   const bot = cssH - $('boosters').getBoundingClientRect().top + 4;
   const avail = Math.max(300, cssH - top - bot);
@@ -144,39 +174,64 @@ function computeLayout() {
   const scale = Math.min(cssW / LW, avail / NEED);
   const hL = avail / scale;
   let extra = hL - NEED;
-  const qExtra = clamp(extra, 0, 66);
+  const qExtra = clamp(extra, 0, 46);
   extra -= qExtra;
   const qH = 110 + qExtra;
   const ox = (cssW - LW * scale) / 2;
   const oy = top + (extra / 2 + qH + 8) * scale;
   view = { cssW, cssH, dpr, scale, ox, oy, qH, x0: -ox / scale, x1: (cssW - ox) / scale, y0: -oy / scale, y1: (cssH - oy) / scale };
-  buildQueueSlots();
+  buildQueueArea();
   bgDirty = true;
 }
 
-function buildQueueSlots() {
-  const qBot = -6, rowH = 21;
-  const rows = Math.max(3, Math.floor((view.qH - 6) / rowH));
-  const xL = 20, xR = 380;
-  const y = (r) => qBot - 10 - r * rowH;
-  const pts = [[200, y(0)]];
-  for (let r = 0; r < rows; r++) {
-    const xe = r % 2 === 0 ? xL : xR;
-    pts.push([xe, y(r)]);
-    if (r < rows - 1) pts.push([xe, y(r + 1)]);
+let lane = null;       // waiting-line area next to the carousel
+
+function buildQueueArea() {
+  const qTop = -8 - view.qH, qBot = -6;
+  // Carousel: riders stand shoulder to shoulder, so the loop is sized to fit its seats.
+  const SP = 14.5;
+  const n = G ? G.pods.length : 20;
+  const P = n * SP;
+  const h = Math.min(qBot - qTop - 26, P / PI);
+  const ls = Math.max(0, (P - PI * h) / 2);
+  const x = 18, y = (qTop + qBot) / 2 - h / 2;
+  ring = { x, y, w: ls + h, h, r: h / 2, ls, P: 2 * ls + PI * h, cy: y + h / 2, qTop, qBot };
+  // Waiting line: a snake to the right, the front next to the carousel.
+  const xs = x + ring.w + 30, xe = 384, rowH = 16;
+  const rows = Math.max(1, Math.floor((qBot - qTop - 18) / rowH));
+  const y0 = qBot - 13;
+  const pts = [];
+  for (let k = 0; k < rows; k++) {
+    const yy = y0 - k * rowH;
+    if (k % 2 === 0) pts.push([xs, yy], [xe, yy]); else pts.push([xe, yy], [xs, yy]);
   }
-  const SP = 14, slots = [pts[0].slice()];
+  const WS = 14, slots = [pts[0].slice()];
   let dist = 0;
   for (let i = 1; i < pts.length; i++) {
     const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
     const L = Math.hypot(bx - ax, by - ay);
-    let t = SP - dist;
-    while (t <= L) { slots.push([ax + (bx - ax) * t / L, ay + (by - ay) * t / L]); t += SP; }
-    dist = L - (t - SP);
+    let t = WS - dist;
+    while (t <= L) { slots.push([ax + (bx - ax) * t / L, ay + (by - ay) * t / L]); t += WS; }
+    dist = L - (t - WS);
   }
   queueSlots = slots;
-  queueRows = { rows, rowH, y, xL, xR };
+  lane = { xs, xe, rows, rowH, y0, qTop, qBot };
 }
+
+function ringPoint(s) {
+  const R = ring;
+  s = ((s % R.P) + R.P) % R.P;
+  if (s < R.ls) return [R.x + R.r + s, R.y];
+  s -= R.ls;
+  const arc = PI * R.r;
+  if (s < arc) { const a = -PI / 2 + s / R.r; return [R.x + R.w - R.r + Math.cos(a) * R.r, R.cy + Math.sin(a) * R.r]; }
+  s -= arc;
+  if (s < R.ls) return [R.x + R.w - R.r - s, R.y + R.h];
+  s -= R.ls;
+  const a = PI / 2 + s / R.r;
+  return [R.x + R.r + Math.cos(a) * R.r, R.cy + Math.sin(a) * R.r];
+}
+function podPos(i) { return ringPoint(G.rot + i * ring.P / G.pods.length); }
 
 function bayW() { const n = G ? G.bays.length : 5; return Math.min(76, 384 / n); }
 function bayPos(i) { const n = G.bays.length; return [LW / 2 + (i - (n - 1) / 2) * bayW(), BAY_CY]; }
@@ -185,6 +240,7 @@ function bayPos(i) { const n = G.bays.length; return [LW / 2 + (i - (n - 1) / 2)
 function boxOf(v, pad = 0) { return { cx: v.x, cy: v.y, ang: v.ang, hl: v.len / 2 + pad, hw: v.wid / 2 + pad }; }
 function homeBox(v) {
   if (v.state === 'bump') return { cx: v.bump.ox, cy: v.bump.oy, ang: v.ang, hl: v.len / 2, hw: v.wid / 2 };
+  if (v.state === 'emerging') return { cx: v.tx, cy: v.ty, ang: v.ang, hl: v.len / 2, hw: v.wid / 2 };
   return boxOf(v);
 }
 function sweepBox(b) {
@@ -211,29 +267,172 @@ function pointInBox(x, y, b) {
 }
 
 /* ------------------------------------------------------- level generation */
-function stuckSet(vs) {
-  const n = vs.length;
-  const bx = vs.map((v) => boxOf(v));
-  const sw = bx.map((b) => sweepBox(b));
-  const blk = vs.map((_, i) => {
-    const a = [];
-    for (let j = 0; j < n; j++) if (j !== i && overlap(sw[i], bx[j])) a.push(j);
-    return a;
-  });
-  const alive = new Array(n).fill(true);
-  let prog = true;
-  while (prog) {
-    prog = false;
-    for (let i = 0; i < n; i++) {
-      if (alive[i] && blk[i].every((j) => !alive[j])) { alive[i] = false; prog = true; }
+// Simulate clearing the lot. Garages release their vehicles one at a time onto the spot in
+// front of their door; garage buildings are permanent obstacles. Returns an exit order
+// (random choice among free vehicles when rng is given) and whatever could never get out.
+function simulateExit(lotV, garages, rng) {
+  const rem = new Set(lotV);
+  const gq = garages.map((g) => g.queue.slice());
+  const gBoxes = garages.map((g) => boxOf(g));
+  const order = [];
+  for (;;) {
+    const present = [...rem];
+    gq.forEach((q) => { if (q.length) present.push(q[0]); });
+    if (!present.length) break;
+    const boxes = present.map((v) => boxOf(v));
+    const free = present.filter((v, i) => {
+      const sw = sweepBox(boxes[i]);
+      if (gBoxes.some((b) => overlap(sw, b))) return false;
+      for (let j = 0; j < present.length; j++) if (j !== i && overlap(sw, boxes[j])) return false;
+      return true;
+    });
+    if (!free.length) break;
+    const take = rng ? [free[(rng() * free.length) | 0]] : free;
+    for (const v of take) {
+      order.push(v);
+      if (v.garage != null) gq[v.garage].shift(); else rem.delete(v);
     }
   }
-  return vs.filter((_, i) => alive[i]);
+  return { order, stuck: [...rem], stuckGarages: gq.map((q, i) => (q.length ? i : -1)).filter((i) => i >= 0) };
 }
 
-function isFree(v, among) {
-  const sw = sweepBox(boxOf(v));
-  return !among.some((u) => u !== v && overlap(sw, boxOf(u)));
+function tryGenerate(cfg, T, rng) {
+  const PAD = 3;
+  const axis = [0, PI / 2, PI, -PI / 2], diag = [PI / 4, 3 * PI / 4, -PI / 4, -3 * PI / 4];
+  const capPick = () => {
+    const r = rng(); let acc = 0;
+    for (const k of [4, 6, 10]) { acc += cfg.capW[k] || 0; if (r < acc) return k; }
+    return 6;
+  };
+  const mk = (cap, ang, x, y) => { const [len, wid] = T.sizes[cap]; return { x, y, ang, len, wid, cap }; };
+  const maxLen = T.sizes[10][0], maxWid = Math.max(T.sizes[4][1], T.sizes[6][1], T.sizes[10][1]);
+
+  // 1) garages, each with a reserved exit spot in front of the door
+  const garages = [], reserved = [];
+  for (let gi = 0; gi < cfg.garages; gi++) {
+    for (let t = 0; t < 300; t++) {
+      const ang = [0, PI / 2, PI, -PI / 2][(rng() * 4) | 0];
+      const c = Math.cos(ang), s = Math.sin(ang);
+      const gl = 34, gw = maxWid + 10, total = gl + 3 + maxLen;
+      const ex = Math.abs(c) * total / 2 + Math.abs(s) * gw / 2 + 4, ey = Math.abs(s) * total / 2 + Math.abs(c) * gw / 2 + 4;
+      const mx = LOT.x + ex + rng() * (LOT.w - 2 * ex), my = LOT.y + ey + rng() * (LOT.h - 2 * ey);
+      const g = { x: mx - c * (total / 2 - gl / 2), y: my - s * (total / 2 - gl / 2), ang, len: gl, wid: gw, queue: [] };
+      const spot = { x: g.x + c * (gl / 2 + 3 + maxLen / 2), y: g.y + s * (gl / 2 + 3 + maxLen / 2), ang, len: maxLen, wid: gw };
+      const combo = boxOf({ x: mx, y: my, ang, len: total, wid: gw }, 6);
+      if (reserved.some((r) => overlap(combo, boxOf(r, 6)))) continue;
+      const sw = sweepBox(boxOf(spot));
+      if (reserved.some((r) => overlap(sw, boxOf(r)))) continue;
+      if (garages.some((o) => overlap(sweepBox(boxOf(o.spot)), combo))) continue;
+      g.spot = spot;
+      garages.push(g); reserved.push(g, spot);
+      break;
+    }
+  }
+  let inGarages = 0;
+  garages.forEach((g, gi) => {
+    const k = 2 + ((rng() * (cfg.garageSize - 1)) | 0);
+    const c = Math.cos(g.ang), s = Math.sin(g.ang);
+    for (let i = 0; i < k; i++) {
+      const v = mk(capPick(), g.ang, 0, 0);
+      v.x = g.x + c * (g.len / 2 + 3 + v.len / 2); v.y = g.y + s * (g.len / 2 + 3 + v.len / 2);
+      v.garage = gi;
+      g.queue.push(v);
+      inGarages++;
+    }
+  });
+
+  // 2) vehicles parked in the lot
+  const target = Math.max(4, cfg.n - inGarages);
+  const lotV = [];
+  const fits = (v) => {
+    const b = boxOf(v, PAD);
+    for (const r of reserved) if (overlap(b, boxOf(r, PAD))) return false;
+    for (const u of lotV) if (overlap(b, boxOf(u, PAD))) return false;
+    return true;
+  };
+  let tracks = null;
+  if (cfg.theme === 'train') {
+    // parallel sidings packed nose-to-tail, mostly facing the nearer end of the yard
+    const k = 7;
+    tracks = [];
+    for (let i = 0; i < k; i++) tracks.push(LOT.y + 26 + i * (LOT.h - 52) / (k - 1));
+    for (const ty of tracks) {
+      let cur = LOT.x + 3 + rng() * 10;
+      for (;;) {
+        const cap = capPick();
+        const len = T.sizes[cap][0];
+        if (cur + len > LOT.x + LOT.w - 3) break;
+        const cx = cur + len / 2;
+        const ang = rng() < (cx < LOT.x + LOT.w / 2 ? 0.72 : 0.28) ? PI : 0;
+        lotV.push(mk(cap, ang, cx, ty));
+        cur += len + 6 + rng() * 12;
+      }
+    }
+    shuffle(lotV, rng);
+    lotV.length = Math.min(lotV.length, target);
+  } else {
+    let tries = 0;
+    while (lotV.length < target && tries < 6000) {
+      tries++;
+      const cap = capPick();
+      const [len, wid] = T.sizes[cap];
+      const ang = (cfg.diag && rng() < 0.35) ? diag[(rng() * 4) | 0] : axis[(rng() * 4) | 0];
+      const c = Math.abs(Math.cos(ang)), s = Math.abs(Math.sin(ang));
+      const ex = c * len / 2 + s * wid / 2 + 2, ey = s * len / 2 + c * wid / 2 + 2;
+      const v = mk(cap, ang, Math.round(LOT.x + ex + rng() * (LOT.w - 2 * ex)), Math.round(LOT.y + ey + rng() * (LOT.h - 2 * ey)));
+      if (fits(v)) lotV.push(v);
+    }
+  }
+
+  // 3) make sure everything can eventually leave: flip or remove deadlocked lot vehicles
+  for (let it = 0; it < 400; it++) {
+    const sim = simulateExit(lotV, garages, null);
+    if (!sim.stuck.length && !sim.stuckGarages.length) break;
+    if (!sim.stuck.length) { sim.stuckGarages.forEach((gi) => { garages[gi].queue.length = 0; }); continue; }
+    const v = sim.stuck[(rng() * sim.stuck.length) | 0];
+    if (!v.flipped) { v.ang += PI; v.flipped = true; }
+    else lotV.splice(lotV.indexOf(v), 1);
+  }
+  const fin = simulateExit(lotV, garages, null);
+  for (const v of fin.stuck) lotV.splice(lotV.indexOf(v), 1);
+  fin.stuckGarages.forEach((gi) => { garages[gi].queue.length = 0; });
+  for (const v of lotV) v.ang = Math.atan2(Math.sin(v.ang), Math.cos(v.ang));
+  const all = lotV.concat(...garages.map((g) => g.queue));
+  if (all.length < 4) return null;
+
+  // 4) colours: every colour appears at least once; the biggest lot vehicle can be the Party one
+  if (cfg.party && lotV.length) lotV.slice().sort((a, b) => b.cap - a.cap)[0].party = true;
+  const others = all.filter((v) => !v.party);
+  const cols = [];
+  for (let i = 0; i < others.length; i++) cols.push(i < cfg.colors ? i : (rng() * cfg.colors) | 0);
+  shuffle(cols, rng);
+  others.forEach((v, i) => { v.color = cols[i]; });
+  all.forEach((v) => { if (v.party) v.color = PARTY; });
+
+  // 5) a guaranteed-valid exit order; the passenger queue is built around it
+  const order = simulateExit(lotV, garages, rng).order;
+
+  // Locks: a vehicle at plan position i may need up to (i - open + 1) departures first.
+  if (cfg.lockCount) {
+    const cand = order.map((v, i) => ({ v, i })).filter((o) => o.i >= cfg.open && !o.v.party && o.v.garage == null);
+    shuffle(cand, rng);
+    cand.slice(0, cfg.lockCount).forEach((o) => { o.v.lock = 1 + ((rng() * Math.min(o.i - cfg.open + 1, 8)) | 0); });
+  }
+  // Mystery: hide the colours of lot vehicles that start blocked.
+  if (cfg.mysteryFrac) {
+    const present = lotV.concat(garages.filter((g) => g.queue.length).map((g) => g.queue[0]));
+    const gBoxes = garages.map((g) => boxOf(g));
+    const blocked = lotV.filter((v) => {
+      if (v.party || v.lock) return false;
+      const sw = sweepBox(boxOf(v));
+      return gBoxes.some((b) => overlap(sw, b)) || present.some((u) => u !== v && overlap(sw, boxOf(u)));
+    });
+    shuffle(blocked, rng);
+    blocked.slice(0, Math.round(cfg.mysteryFrac * all.length)).forEach((v) => { v.mystery = true; });
+  }
+
+  const queue = buildQueue(order, cfg.open, cfg.stick, rng);
+  return { vehicles: all, garages, tracks, queue };
 }
 
 function buildQueue(order, open, stick, rng) {
@@ -252,84 +451,6 @@ function buildQueue(order, open, stick, rng) {
     }
   }
   return q;
-}
-
-function tryGenerate(cfg, T, rng) {
-  const vs = [];
-  const PAD = 3;
-  const axis = [0, PI / 2, PI, -PI / 2], diag = [PI / 4, 3 * PI / 4, -PI / 4, -3 * PI / 4];
-  const capPick = () => {
-    const r = rng(); let acc = 0;
-    for (const k of [4, 6, 10]) { acc += cfg.capW[k] || 0; if (r < acc) return k; }
-    return 6;
-  };
-  let tries = 0;
-  while (vs.length < cfg.n && tries < 6000) {
-    tries++;
-    const isParty = cfg.party && vs.length === 0;
-    const cap = isParty ? 10 : capPick();
-    const [len, wid] = T.sizes[cap];
-    const ang = (cfg.diag && rng() < 0.35) ? diag[(rng() * 4) | 0] : axis[(rng() * 4) | 0];
-    const c = Math.abs(Math.cos(ang)), s = Math.abs(Math.sin(ang));
-    const ex = c * len / 2 + s * wid / 2 + 2, ey = s * len / 2 + c * wid / 2 + 2;
-    const x = Math.round(LOT.x + ex + rng() * (LOT.w - 2 * ex));
-    const y = Math.round(LOT.y + ey + rng() * (LOT.h - 2 * ey));
-    const v = { x, y, ang, len, wid, cap, party: isParty };
-    const b = boxOf(v, PAD);
-    let ok = true;
-    for (const u of vs) if (overlap(b, boxOf(u, PAD))) { ok = false; break; }
-    if (ok) vs.push(v);
-  }
-
-  // Make sure every vehicle can eventually leave: flip or remove deadlocked ones.
-  for (let it = 0; it < 400; it++) {
-    const stuck = stuckSet(vs);
-    if (!stuck.length) break;
-    const v = stuck[(rng() * stuck.length) | 0];
-    if (!v.flipped) { v.ang += PI; v.flipped = true; }
-    else {
-      const removable = stuck.filter((u) => !u.party);
-      if (removable.length) vs.splice(vs.indexOf(removable[(rng() * removable.length) | 0]), 1);
-    }
-  }
-  const leftover = stuckSet(vs);
-  for (const v of leftover) vs.splice(vs.indexOf(v), 1);
-  if (vs.length < 4) return null;
-  for (const v of vs) v.ang = Math.atan2(Math.sin(v.ang), Math.cos(v.ang));
-
-  // Colours: every colour appears at least once.
-  const others = vs.filter((v) => !v.party);
-  const cols = [];
-  for (let i = 0; i < others.length; i++) cols.push(i < cfg.colors ? i : (rng() * cfg.colors) | 0);
-  shuffle(cols, rng);
-  others.forEach((v, i) => { v.color = cols[i]; });
-  vs.forEach((v) => { if (v.party) v.color = PARTY; });
-
-  // A guaranteed-valid exit order; the passenger queue is built around it.
-  const order = [];
-  const rem = vs.slice();
-  while (rem.length) {
-    const free = rem.filter((v) => isFree(v, rem));
-    const p = free[(rng() * free.length) | 0];
-    order.push(p);
-    rem.splice(rem.indexOf(p), 1);
-  }
-
-  // Locks: a vehicle at plan position i may need up to (i - open + 1) departures first.
-  if (cfg.lockCount) {
-    const cand = order.map((v, i) => ({ v, i })).filter((o) => o.i >= cfg.open && !o.v.party);
-    shuffle(cand, rng);
-    cand.slice(0, cfg.lockCount).forEach((o) => { o.v.lock = 1 + ((rng() * Math.min(o.i - cfg.open + 1, 8)) | 0); });
-  }
-  // Mystery: hide colours of vehicles that start blocked.
-  if (cfg.mysteryFrac) {
-    const blocked = vs.filter((v) => !v.party && !isFree(v, vs));
-    shuffle(blocked, rng);
-    blocked.slice(0, Math.round(cfg.mysteryFrac * vs.length)).forEach((v) => { v.mystery = true; });
-  }
-
-  const queue = buildQueue(order, cfg.open, cfg.stick, rng);
-  return { vehicles: vs, queue };
 }
 
 function generateLevel(cfg) {
@@ -397,13 +518,17 @@ const sfx = {
     const k = G && G.T.key;
     if (k === 'boat') Snd.noise(0.35, 0.12, 0, 300, 900);
     else if (k === 'plane') Snd.noise(0.4, 0.1, 0, 600, 2400);
+    else if (k === 'train') { [0, 0.12, 0.24].forEach((d) => Snd.noise(0.09, 0.1, d, 400, 700)); }
+    else if (k === 'space') Snd.tone(220, 0.35, 'sine', 0.08, 880);
     else Snd.tone(150, 0.3, 'sawtooth', 0.05, 300);
   },
   pop(n) { Snd.tone(semi(520, n * 1.5), 0.08, 'sine', 0.16, semi(700, n * 1.5)); },
   full() { [0, 4, 7].forEach((s, i) => Snd.tone(semi(523, s), 0.12, 'triangle', 0.12, null, i * 0.06)); },
   depart() {
     const k = G && G.T.key;
-    if (k === 'plane') Snd.noise(1.1, 0.14, 0, 300, 3500);
+    if (k === 'plane') Snd.noise(1.6, 0.13, 0.3, 250, 3200);
+    else if (k === 'space') { Snd.noise(1.2, 0.12, 0, 150, 2500); Snd.tone(110, 0.9, 'sawtooth', 0.04, 440); }
+    else if (k === 'train') { Snd.tone(311, 0.3, 'sawtooth', 0.05); Snd.tone(392, 0.3, 'sawtooth', 0.04); Snd.tone(311, 0.4, 'sawtooth', 0.05, null, 0.35); Snd.tone(392, 0.4, 'sawtooth', 0.04, null, 0.35); }
     else if (k === 'boat') { Snd.tone(147, 0.45, 'sawtooth', 0.06); Snd.tone(110, 0.45, 'sawtooth', 0.05); }
     else Snd.tone(110, 0.4, 'sawtooth', 0.05, 220);
   },
@@ -411,6 +536,8 @@ const sfx = {
     const k = G && G.T.key;
     if (k === 'boat') { Snd.tone(130, 0.35, 'sawtooth', 0.08); Snd.tone(196, 0.35, 'sawtooth', 0.05); }
     else if (k === 'plane') { Snd.tone(880, 0.09, 'square', 0.05); Snd.tone(880, 0.09, 'square', 0.05, null, 0.12); }
+    else if (k === 'train') { Snd.tone(330, 0.22, 'sawtooth', 0.06); Snd.tone(415, 0.22, 'sawtooth', 0.05); }
+    else if (k === 'space') Snd.tone(660, 0.2, 'square', 0.05, 220);
     else { Snd.tone(370, 0.17, 'square', 0.06); Snd.tone(466, 0.17, 'square', 0.05); }
   },
   nope() { Snd.tone(220, 0.14, 'triangle', 0.15, 140); },
@@ -450,14 +577,29 @@ function startLevel(n) {
   let id = 0;
   for (const v of gen.vehicles) {
     Object.assign(v, {
-      id: id++, state: 'lot', filled: 0, incoming: 0, wobble: 0, revealT: 0, unlockT: 0,
+      id: id++, state: v.garage != null ? 'garage' : 'lot', filled: 0, incoming: 0, wobble: 0, revealT: 0, unlockT: 0,
       revealed: !v.mystery, lock: v.lock || 0, bay: -1, path: null, pi: 0, speed: 0, maxSpeed: 520, tang: v.ang, fly: 0,
+      pulse: 0, parkT: 0, appearT: v.garage != null ? 1 : -0.15 - Math.random() * 0.35,
+    });
+  }
+  const garages = gen.garages.map((g, i) => ({
+    x: g.x, y: g.y, ang: g.ang, len: g.len, wid: g.wid, queue: g.queue, wobble: 0, doorT: 0, cool: 0.5 + i * 0.3,
+  }));
+  const asteroids = [];
+  for (let i = 0; i < cfg.asteroids; i++) {
+    const r = rand(11, 16), a = rand(0, TAU), sp = rand(20, 32);
+    const shape = [];
+    for (let k = 0; k < 9; k++) shape.push(rand(0.78, 1.08));
+    asteroids.push({
+      x: rand(LOT.x + r, LOT.x + LOT.w - r), y: rand(LOT.y + r, LOT.y + LOT.h - r), r, len: r * 2, wid: r * 2, ang: 0,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, rot: rand(0, TAU), vr: rand(-0.8, 0.8), wobble: 0, shape, active: true, wait: 0,
     });
   }
   G = {
     level: n, cfg, T,
-    vehicles: gen.vehicles,
-    queue: gen.queue.map(newPassenger),
+    vehicles: gen.vehicles, garages, asteroids, tracks: gen.tracks,
+    waiting: gen.queue.map(newPassenger),
+    pods: new Array(cfg.pods).fill(null), rot: 0, refillT: 0,
     walkers: [], parts: [], floats: [],
     bays: new Array(cfg.bays).fill(null),
     crashes: 0, departed: 0, earned: 0, taps: 0,
@@ -467,10 +609,14 @@ function startLevel(n) {
     time: 0, shake: 0, liftMode: false,
     tutorial: n === 1 && !save.seen.tut, hint: null, hintT: 0,
   };
-  for (let i = 0; i < G.queue.length; i++) {
-    const s = queueSlots[Math.min(i, queueSlots.length - 1)];
-    G.queue[i].x = s[0]; G.queue[i].y = s[1];
+  computeLayout();
+  // the carousel starts fully loaded; everyone else waits in line
+  for (let i = 0; i < G.pods.length && G.waiting.length; i++) {
+    const p = G.waiting.shift();
+    [p.x, p.y] = podPos(i);
+    G.pods[i] = p;
   }
+  G.waiting.forEach((p, i) => { [p.x, p.y] = queueSlots[Math.min(i, queueSlots.length - 1)]; });
   lotChanged(true);
   bgDirty = true;
   hideMenu();
@@ -488,7 +634,7 @@ function showIntros() {
       emoji: '🎉', title: "Lottie's Bus Party!",
       html: `<p>Everyone's off to the party — get them there!</p>
         <div class="tip">👆 <b>Tap</b> a vehicle to drive it out. It only moves if <b>nothing is in its way</b>.</div>
-        <div class="tip">🎨 Passengers hop onto vehicles of <b>their colour</b>. Full vehicles zoom off!</div>
+        <div class="tip">🎠 Passengers ride the <b>party carousel</b> and hop onto vehicles of <b>their colour</b>. Full vehicles zoom off!</div>
         <div class="tip">🅿️ Don't fill every bay with the <b>wrong colours</b> or it's a jam!</div>`,
     });
   }
@@ -507,12 +653,33 @@ function showIntros() {
         html: `<p>Planes taxi round the airport to the gates, then take off when they're full!</p>
           <div class="tip">⛽ <b>NEW: Refuelling planes!</b> They're locked until that many other planes have taken off.</div>`,
       });
+    } else if (cfg.cycle === 0 && cfg.theme === 'train') {
+      pages.push({
+        emoji: '🚂', title: 'Rail Yard',
+        html: `<p>Trains wait nose-to-tail on long sidings. Only a train with <b>nothing in front of it</b> can pull out to the platforms.</p>
+          <div class="tip">🧠 Think ahead: the train you need might be stuck at the back of a siding!</div>`,
+      });
+    } else if (cfg.cycle === 0 && cfg.theme === 'space') {
+      pages.push({
+        emoji: '🚀', title: 'Star Port',
+        html: `<p>The toughest world! Rockets blast off from just <b>4 docking ports</b>.</p>
+          <div class="tip">☄️ <b>Asteroids</b> drift across the launch field. Wait for a gap before you launch!</div>
+          <div class="tip">🔋 Charging rockets and 🎁 mystery rockets are back too.</div>`,
+      });
     } else {
       pages.push({
         emoji: T.emoji, title: `${T.world} — Remix!`,
-        html: `<p>Welcome back! This time <b>mystery</b> 🎁 and <b>locked</b> ${T.lockIcon} ${T.plural} are everywhere. Good luck!</p>`,
+        html: `<p>Welcome back! This time <b>mystery</b> 🎁, <b>locked</b> ${T.lockIcon} and <b>${T.garage}</b> 🏠 ${T.plural} are everywhere. Good luck!</p>`,
       });
     }
+  }
+  if (cfg.garages && !save.seen.garage) {
+    save.seen.garage = 1;
+    pages.push({
+      emoji: '🏠', title: `NEW: ${T.garage[0].toUpperCase() + T.garage.slice(1)}s!`,
+      html: `<p>More ${T.plural} wait inside. They drive out <b>one at a time</b>, only when the spot in front of the door is clear.</p>
+        <div class="tip">🔢 The badge shows how many are inside, and the dot shows the colour coming out next.</div>`,
+    });
   }
   if (cfg.party && !save.seen.partyLvl) {
     save.seen.partyLvl = 1;
@@ -535,14 +702,31 @@ function showIntros() {
 }
 
 /* --------------------------------------------------------------- actions */
-function getBlockers(v) {
+function respawnAsteroid(a) {
+  // enter from a random edge, heading somewhere across the field
+  const side = (Math.random() * 4) | 0, m = a.r + 2;
+  if (side === 0) { a.x = rand(LOT.x, LOT.x + LOT.w); a.y = LOT.y - m; }
+  else if (side === 1) { a.x = LOT.x + LOT.w + m; a.y = rand(LOT.y, LOT.y + LOT.h); }
+  else if (side === 2) { a.x = rand(LOT.x, LOT.x + LOT.w); a.y = LOT.y + LOT.h + m; }
+  else { a.x = LOT.x - m; a.y = rand(LOT.y, LOT.y + LOT.h); }
+  const tx = LOT.x + LOT.w / 2 + rand(-110, 110), ty = LOT.y + LOT.h / 2 + rand(-120, 120);
+  const d = Math.hypot(tx - a.x, ty - a.y) || 1, sp = rand(20, 32);
+  a.vx = (tx - a.x) / d * sp; a.vy = (ty - a.y) / d * sp;
+  a.active = true;
+}
+
+function obstaclesFor(v, withRocks) {
+  const list = G.vehicles.filter((u) => u !== v && (u.state === 'lot' || u.state === 'bump' || u.state === 'emerging'));
+  return withRocks ? list.concat(G.garages, G.asteroids.filter((a) => a.active)) : list.concat(G.garages);
+}
+function getBlockers(v, withRocks = true) {
   const sw = sweepBox(homeBox(v));
-  return G.vehicles.filter((u) => u !== v && (u.state === 'lot' || u.state === 'bump') && overlap(sw, homeBox(u)));
+  return obstaclesFor(v, withRocks).filter((u) => overlap(sw, homeBox(u)));
 }
 
 function lotChanged(silent) {
   for (const v of G.vehicles) {
-    if (v.state === 'lot' && !v.revealed && getBlockers(v).length === 0) {
+    if (v.state === 'lot' && !v.revealed && getBlockers(v, false).length === 0) {
       v.revealed = true;
       if (!silent) {
         v.revealT = 0.5;
@@ -680,8 +864,15 @@ function depart(v) {
   G.bays[v.bay] = null;
   v.state = 'leaving'; v.speed = 40; v.pi = 0;
   const [bx] = bayPos(v.bay);
-  if (G.T.key === 'plane') { v.path = [[bx, view.y0 - 200]]; v.maxSpeed = 620; }
-  else {
+  if (G.T.depart === 'up') { v.path = [[bx, view.y0 - 200]]; v.maxSpeed = 620; }
+  else if (G.T.depart === 'runway') {
+    // push back, taxi round to the runway along the bottom, then take off
+    const left = bx < LW / 2;
+    const cx = left ? RING.x : RING.x + RING.w, ry = RING.y + RING.h, dir = left ? 1 : -1;
+    v.path = [[bx, RING.y, 1], [cx, RING.y], [cx, ry], [cx + dir * 320, ry], [cx + dir * 760, ry - 300]];
+    v.runway = { x0: cx };
+    v.maxSpeed = 230;
+  } else {
     const ex = bx >= LW / 2 ? view.x1 + 90 : view.x0 - 90;
     v.path = [[bx, RING.y, 1], [ex, RING.y]];
     v.maxSpeed = 560;
@@ -724,21 +915,43 @@ function addCoins(n, x, y) {
 }
 
 function tryBoard() {
-  if (!G.queue.length) return;
-  const p = G.queue[0];
-  const s0 = queueSlots[0];
-  if (Math.hypot(p.x - s0[0], p.y - s0[1]) > 16) return;
-  let best = null;
-  for (const v of G.bays) {
-    if (v && v.state === 'bay' && v.color === p.c && v.filled + v.incoming < v.cap) {
-      if (!best || v.filled + v.incoming > best.filled + best.incoming) best = v;
+  const open = G.bays.filter((v) => v && v.state === 'bay' && v.filled + v.incoming < v.cap)
+    .sort((a, b) => (b.filled + b.incoming) - (a.filled + a.incoming));
+  for (const v of open) {
+    let bi = -1, bd = 1e9;
+    G.pods.forEach((p, i) => {
+      if (p && !p.entering && p.c === v.color) {
+        const d = Math.hypot(p.x - v.x, p.y - v.y);
+        if (d < bd) { bd = d; bi = i; }
+      }
+    });
+    if (bi >= 0) {
+      const p = G.pods[bi];
+      G.pods[bi] = null;
+      v.incoming++;
+      G.walkers.push({ p, v, sx: p.x, sy: p.y });
+      G.boardT = G.partyT > 0 ? 0.04 : 0.08;
+      return;
     }
   }
-  if (!best) return;
-  G.queue.shift();
-  best.incoming++;
-  G.walkers.push({ p, v: best });
-  G.boardT = G.partyT > 0 ? 0.045 : 0.09;
+}
+
+// the next person in line steps onto the nearest empty carousel spot
+function refill() {
+  if (!G.waiting.length) return;
+  const [ex, ey] = queueSlots[0];
+  let bi = -1, bd = 1e9;
+  for (let i = 0; i < G.pods.length; i++) {
+    if (G.pods[i]) continue;
+    const [x, y] = podPos(i);
+    const d = Math.hypot(x - ex, y - ey);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  if (bi < 0) return;
+  const p = G.waiting.shift();
+  p.entering = true;
+  G.pods[bi] = p;
+  G.refillT = G.partyT > 0 ? 0.04 : 0.07;
 }
 
 /* --------------------------------------------------------------- boosters */
@@ -763,20 +976,20 @@ function useBooster(kind) {
     sparkles(bx, by, '#ffffff', 14);
     toast('🅿️ Extra bay!');
   } else if (kind === 'sort') {
-    if (G.queue.length < 3) return;
-    const n = Math.min(24, G.queue.length);
-    const head = G.queue.slice(0, n);
+    if (G.waiting.length < 3) { toast('Nobody waiting in line!'); return; }
+    const n = Math.min(24, G.waiting.length);
+    const head = G.waiting.slice(0, n);
     // prefer colours already waiting in a bay, then order of appearance
     const order = [];
     for (const v of G.bays) if (v && v.filled + v.incoming < v.cap && !order.includes(v.color)) order.push(v.color);
     head.forEach((p) => { if (!order.includes(p.c)) order.push(p.c); });
     head.sort((a, b) => order.indexOf(a.c) - order.indexOf(b.c));
-    G.queue.splice(0, n, ...head);
-    G.queue.forEach((p, i) => {
+    G.waiting.splice(0, n, ...head);
+    G.waiting.forEach((p, i) => {
       if (i < n) { const s = queueSlots[Math.min(i, queueSlots.length - 1)]; p.x = s[0]; p.y = s[1]; sparkles(p.x, p.y, '#ffffff', 1); }
     });
     pay('sort'); sfx.sort();
-    toast('✨ Queue sorted!');
+    toast('✨ Line sorted!');
   } else if (kind === 'lift') {
     if (!G.bays.some((b) => !b)) { toast('No free bay to lift into!'); sfx.nope(); return; }
     G.liftMode = true;
@@ -801,6 +1014,9 @@ function followPath(v, dt) {
 
 function updateVehicle(v, dt) {
   if (v.wobble > 0) v.wobble = Math.max(0, v.wobble - dt * 2.4);
+  if (v.pulse > 0) v.pulse = Math.max(0, v.pulse - dt * 5);
+  if (v.parkT > 0) v.parkT = Math.max(0, v.parkT - dt);
+  if (v.appearT < 1) v.appearT += dt;
   if (v.revealT > 0) v.revealT = Math.max(0, v.revealT - dt);
   if (v.unlockT > 0) v.unlockT = Math.max(0, v.unlockT - dt);
   switch (v.state) {
@@ -818,13 +1034,21 @@ function updateVehicle(v, dt) {
       if (b.t >= b.d1 + 0.24) { v.x = b.ox; v.y = b.oy; v.state = 'lot'; v.bump = null; }
       break;
     }
+    case 'emerging': {
+      v.emT += dt;
+      const t = easeOut(Math.min(1, v.emT / 0.6));
+      v.x = v.sx + (v.tx - v.sx) * t; v.y = v.sy + (v.ty - v.sy) * t;
+      if (v.emT >= 0.6) { v.x = v.tx; v.y = v.ty; v.state = 'lot'; v.parkT = 0.3; lotChanged(); }
+      break;
+    }
     case 'moving': {
       v.speed = Math.min(v.maxSpeed, v.speed + dt * 1500);
       const n = v.path.length;
       const [bx, by] = bayPos(v.bay);
       v.path[n - 1] = [bx, by];
       if (!v.lift && n >= 2 && v.pi <= n - 2) v.path[n - 2] = [bx, RING.y];
-      if (followPath(v, dt)) { v.state = 'bay'; v.lift = false; }
+      if (v.pi >= n - 1) v.speed = Math.min(v.speed, Math.max(70, Math.hypot(bx - v.x, by - v.y) * 7)); // ease into the bay
+      if (followPath(v, dt)) { v.state = 'bay'; v.lift = false; v.parkT = 0.35; }
       trail(v, dt);
       break;
     }
@@ -841,8 +1065,17 @@ function updateVehicle(v, dt) {
       break;
     }
     case 'leaving': {
-      v.speed = Math.min(v.maxSpeed, v.speed + dt * (G.T.key === 'plane' ? 520 : 1300));
-      if (G.T.key === 'plane') v.fly = clamp((BAY_CY - v.y) / 260, 0, 1);
+      let acc = 1300;
+      if (v.runway) {
+        const onRunway = v.pi >= 3;
+        v.maxSpeed = onRunway ? 780 : 230;
+        acc = onRunway ? 430 : 700;
+        if (onRunway) v.fly = clamp((Math.abs(v.x - v.runway.x0) - 120) / 190, 0, 1);
+      } else if (G.T.depart === 'up') {
+        acc = 520;
+        v.fly = clamp((BAY_CY - v.y) / 260, 0, 1);
+      }
+      v.speed = Math.min(v.maxSpeed, v.speed + dt * acc);
       if (followPath(v, dt)) v.state = 'gone';
       trail(v, dt);
       break;
@@ -857,6 +1090,10 @@ function trail(v, dt) {
     if (Math.random() < dt * 30) G.parts.push({ type: 'puff', x: bx + rand(-2, 2), y: by + rand(-2, 2), vx: 0, vy: 0, life: 0.45, max: 0.45, size: rand(1.5, 2.5), grow: 5, color: 'rgba(255,255,255,0.7)' });
   } else if (k === 'bus' && !v.lift) {
     if (Math.random() < dt * 14) G.parts.push({ type: 'puff', x: bx, y: by, vx: rand(-10, 10), vy: rand(-10, 10), life: 0.5, max: 0.5, size: 2.5, grow: 7, color: 'rgba(90,90,110,0.45)' });
+  } else if (k === 'space' && !v.lift) {
+    if (Math.random() < dt * 45) G.parts.push({ type: 'puff', x: bx + rand(-2, 2), y: by + rand(-2, 2), vx: -Math.cos(v.ang) * 40, vy: -Math.sin(v.ang) * 40, life: 0.35, max: 0.35, size: rand(2, 3.5), grow: 4, color: pick(['rgba(255,180,70,0.9)', 'rgba(255,240,150,0.9)', 'rgba(255,110,90,0.8)']) });
+  } else if (k === 'train' && !v.lift) {
+    if (Math.random() < dt * 8) { const fx = v.x + Math.cos(v.ang) * (v.len / 2 - 8), fy = v.y + Math.sin(v.ang) * (v.len / 2 - 8); G.parts.push({ type: 'puff', x: fx, y: fy, vx: rand(-8, 8), vy: rand(-20, -8), life: 0.8, max: 0.8, size: 3, grow: 8, color: 'rgba(255,255,255,0.7)' }); }
   } else if (k === 'plane' && v.state === 'leaving' && v.fly > 0.05) {
     if (Math.random() < dt * 30) G.parts.push({ type: 'puff', x: bx, y: by, vx: 0, vy: 30, life: 0.7, max: 0.7, size: 3, grow: 9, color: 'rgba(255,255,255,0.75)' });
   }
@@ -876,19 +1113,67 @@ function update(dt) {
     G.fever = Math.max(0, G.fever - dt * 2.2);
   }
 
-  for (const v of G.vehicles) if (v.state !== 'lot' && v.state !== 'gone') updateVehicle(v, dt);
-  for (const v of G.vehicles) if (v.state === 'lot' && (v.wobble > 0 || v.revealT > 0 || v.unlockT > 0)) updateVehicle(v, dt);
+  for (const v of G.vehicles) if (v.state !== 'lot' && v.state !== 'gone' && v.state !== 'garage') updateVehicle(v, dt);
+  for (const v of G.vehicles) if (v.state === 'lot') updateVehicle(v, dt);
 
-  // queue shuffles forward
+  // garages let their next vehicle out as soon as the spot in front of the door is clear
+  for (const g of G.garages) {
+    if (g.wobble > 0) g.wobble = Math.max(0, g.wobble - dt * 2.4);
+    if (g.doorT > 0) g.doorT = Math.max(0, g.doorT - dt);
+    if (g.cool > 0) { g.cool -= dt; continue; }
+    const v = g.queue[0];
+    if (!v) continue;
+    const tb = boxOf(v);
+    if (G.vehicles.some((u) => u !== v && (u.state === 'lot' || u.state === 'bump' || u.state === 'emerging') && overlap(tb, homeBox(u)))) continue;
+    g.queue.shift();
+    const c = Math.cos(g.ang), s = Math.sin(g.ang);
+    v.tx = v.x; v.ty = v.y;
+    v.sx = g.x + c * (g.len / 2 - v.len / 2); v.sy = g.y + s * (g.len / 2 - v.len / 2);
+    v.x = v.sx; v.y = v.sy; v.emT = 0; v.state = 'emerging';
+    g.cool = 0.4; g.doorT = 0.8;
+    if (G.time > 1) sfx.go();
+  }
+  // asteroids drift across the launch field, out the other side, and come back somewhere new
+  for (const a of G.asteroids) {
+    if (a.wobble > 0) a.wobble = Math.max(0, a.wobble - dt * 2.4);
+    if (!a.active) {
+      a.wait -= dt;
+      if (a.wait <= 0) respawnAsteroid(a);
+      continue;
+    }
+    a.x += a.vx * dt; a.y += a.vy * dt; a.rot += a.vr * dt;
+    const m = a.r + 4;
+    if (a.x < LOT.x - m || a.x > LOT.x + LOT.w + m || a.y < LOT.y - m || a.y > LOT.y + LOT.h + m) {
+      a.active = false; a.wait = rand(0.8, 2.5);
+    }
+  }
+
+  // carousel spins; riders stick to their spot, newcomers walk on
+  const partying = G.partyT > 0;
+  G.rot = (G.rot + dt * (partying ? 80 : 34)) % ring.P;
+  const esp = 340 * dt;
+  for (let i = 0; i < G.pods.length; i++) {
+    const p = G.pods[i];
+    if (!p) continue;
+    const [x, y] = podPos(i);
+    p.walk += dt;
+    if (p.entering) {
+      const dx = x - p.x, dy = y - p.y, d = Math.hypot(dx, dy);
+      if (d <= esp + 1) { p.entering = false; p.x = x; p.y = y; }
+      else { p.x += dx / d * esp; p.y += dy / d * esp; }
+    } else { p.x = x; p.y = y; }
+  }
   const last = queueSlots.length - 1;
-  const qsp = (G.partyT > 0 ? 440 : 270) * dt;
-  for (let i = 0; i < G.queue.length; i++) {
-    const p = G.queue[i];
+  const qsp = (partying ? 440 : 270) * dt;
+  for (let i = 0; i < G.waiting.length; i++) {
+    const p = G.waiting[i];
     const s = queueSlots[Math.min(i, last)];
     const dx = s[0] - p.x, dy = s[1] - p.y, d = Math.hypot(dx, dy);
     if (d <= qsp) { p.x = s[0]; p.y = s[1]; p.moving = false; }
     else { p.x += dx / d * qsp; p.y += dy / d * qsp; p.moving = true; p.walk += dt; }
   }
+  G.refillT -= dt;
+  if (G.refillT <= 0) refill();
 
   if (G.state === 'play' && !G.paused) {
     G.boardT -= dt;
@@ -903,7 +1188,7 @@ function update(dt) {
     p.walk += dt;
     if (dist <= wsp + 3) {
       G.walkers.splice(i, 1);
-      v.incoming--; v.filled++;
+      v.incoming--; v.filled++; v.pulse = 1;
       sfx.pop(v.filled);
       G.parts.push({ type: 'ring', x: v.x, y: v.y, vx: 0, vy: 0, life: 0.3, max: 0.3, size: 10, color: PAL[p.c].main });
       if (v.filled >= v.cap) {
@@ -915,7 +1200,7 @@ function update(dt) {
   }
 
   if (G.state === 'play') {
-    if (!G.queue.length && !G.walkers.length) {
+    if (!G.waiting.length && !G.walkers.length && G.pods.every((p) => !p)) {
       G.state = 'won'; G.endT = 1.3; G.liftMode = false;
       sfx.win(); buzz([30, 50, 30]);
       for (let i = 0; i < 80; i++) confetti(rand(0, LW), rand(view.y0, 100), true);
@@ -948,23 +1233,27 @@ function update(dt) {
     G.hintT -= dt;
     if (G.hintT <= 0) {
       G.hintT = 0.3;
-      const c = G.queue.length ? G.queue[0].c : -1;
+      const count = {};
+      G.pods.forEach((p) => { if (p) count[p.c] = (count[p.c] || 0) + 1; });
       const cands = G.vehicles.filter((v) => v.state === 'lot' && !v.lock && getBlockers(v).length === 0);
-      G.hint = cands.find((v) => v.color === c) || cands[0] || null;
+      cands.sort((a, b) => (count[b.color] || 0) - (count[a.color] || 0));
+      G.hint = cands[0] || null;
       if (!G.bays.some((b) => !b)) G.hint = null;
     }
   }
 }
 
 function checkLose(dt) {
-  if (!G.queue.length || G.walkers.length || G.bays.some((b) => !b)) { G.loseT = 0; return; }
-  const c = G.queue[0].c;
+  const riders = G.pods.filter(Boolean);
+  const busy = G.walkers.length || G.bays.some((b) => !b) || riders.some((p) => p.entering) ||
+    (G.waiting.length && riders.length < G.pods.length) || !riders.length;
+  if (busy) { G.loseT = 0; return; }
   for (const v of G.bays) {
     if (v.state !== 'bay' && v.state !== 'moving') { G.loseT = 0; return; }
-    if (v.color === c && v.filled + v.incoming < v.cap) { G.loseT = 0; return; }
+    if (v.filled + v.incoming < v.cap && riders.some((p) => p.c === v.color)) { G.loseT = 0; return; }
   }
   G.loseT += dt;
-  if (G.loseT > 0.8) lose();
+  if (G.loseT > 1) lose();
 }
 
 /* ------------------------------------------------------------- particles */
@@ -988,6 +1277,18 @@ function rebuildBg() {
   bgCanvas.width = canvas.width; bgCanvas.height = canvas.height;
   paintBg(bgCtx, G ? G.T.key : 'bus');
   bgDirty = false;
+}
+
+function railH(g, x1, x2, y) {
+  g.fillStyle = '#7a5a3a';
+  for (let x = x1; x < x2; x += 7) g.fillRect(x, y - 7, 3, 14);
+  g.fillStyle = '#5d6270'; g.fillRect(x1, y - 5.3, x2 - x1, 1.8); g.fillRect(x1, y + 3.5, x2 - x1, 1.8);
+  g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(x1, y - 5.3, x2 - x1, 0.6); g.fillRect(x1, y + 3.5, x2 - x1, 0.6);
+}
+function railV(g, x, y1, y2) {
+  g.fillStyle = '#7a5a3a';
+  for (let y = y1; y < y2; y += 7) g.fillRect(x - 7, y, 14, 3);
+  g.fillStyle = '#5d6270'; g.fillRect(x - 5.3, y1, 1.8, y2 - y1); g.fillRect(x + 3.5, y1, 1.8, y2 - y1);
 }
 
 function tree(g, x, y, r) {
@@ -1091,17 +1392,10 @@ function paintBg(g, th) {
       g.fillStyle = '#ffffff'; circ(g, x, y, 5); g.fill();
       g.fillStyle = '#ff4d6d'; circ(g, x, y, 3); g.fill();
     });
-  } else {
+  } else if (th === 'plane') {
     g.fillStyle = '#9fe372'; g.fillRect(X0, Y0, W, H);
     g.fillStyle = 'rgba(0,0,0,0.04)';
     for (let x = Math.floor(X0 / 44) * 44; x < X0 + W; x += 44) g.fillRect(x, Y0, 22, H);
-    // runway along the bottom
-    if (V.y1 > WORLD_BOTTOM + 40) {
-      const ry = WORLD_BOTTOM + 14;
-      g.fillStyle = '#4e5468'; g.fillRect(X0, ry, W, 46);
-      g.fillStyle = '#ffffff';
-      for (let x = Math.floor(X0 / 40) * 40; x < X0 + W; x += 40) g.fillRect(x, ry + 21, 22, 4);
-    }
     // terminal
     g.fillStyle = '#f5f8ff'; rr(g, 6, qTop - 4, 388, V.qH + 2, 12); g.fill();
     g.save(); rr(g, 6, qTop - 4, 388, V.qH + 2, 12); g.clip();
@@ -1121,38 +1415,158 @@ function paintBg(g, th) {
     for (let x = LOT.x + 40; x < LOT.x + LOT.w; x += 60) { g.beginPath(); g.moveTo(x, LOT.y + 6); g.lineTo(x, LOT.y + LOT.h - 6); g.stroke(); }
     g.strokeStyle = '#ffd23f'; g.lineWidth = 2;
     rr(g, RING.x, RING.y, RING.w, RING.h, 14); g.stroke();
-    for (let x = 6; x <= 394; x += 22) {
-      g.fillStyle = '#5fb7ff'; circ(g, x, LOT.y + LOT.h + ROAD - 2, 1.8); g.fill();
-    }
-    for (let y = BAY_H + 6; y < LOT.y + LOT.h + ROAD; y += 22) {
+    for (let y = BAY_H + 6; y < LOT.y + LOT.h; y += 22) {
       g.fillStyle = '#5fb7ff'; circ(g, 4, y, 1.8); g.fill(); circ(g, 396, y, 1.8); g.fill();
     }
+    // the runway runs along the bottom of the taxiway loop, out past both edges of the screen
+    const ry = RING.y + RING.h;
+    g.fillStyle = '#41475a'; g.fillRect(X0, ry - 18, W, 36);
+    g.fillStyle = '#ffffff';
+    g.fillRect(X0, ry - 16, W, 1.5); g.fillRect(X0, ry + 14.5, W, 1.5);
+    for (let x = Math.floor(X0 / 34) * 34; x < X0 + W; x += 34) g.fillRect(x, ry - 1.2, 18, 2.4);
+    for (const x0 of [RING.x + 6, RING.x + RING.w - 30]) for (let k = 0; k < 5; k++) g.fillRect(x0, ry - 12.5 + k * 5.6, 24, 2.6);
+    g.font = '900 11px ui-rounded, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('09', RING.x + 46, ry + 0.5); g.fillText('27', RING.x + RING.w - 46, ry + 0.5);
+    for (let x = Math.floor(X0 / 22) * 22; x < X0 + W; x += 22) {
+      g.fillStyle = '#ffe36e'; circ(g, x, ry - 19, 1.6); g.fill(); circ(g, x, ry + 19, 1.6); g.fill();
+    }
+  } else if (th === 'train') {
+    g.fillStyle = '#a6e07a'; g.fillRect(X0, Y0, W, H);
+    g.fillStyle = 'rgba(255,255,255,0.07)';
+    for (let y = Math.floor(Y0 / 36) * 36; y < Y0 + H; y += 36) g.fillRect(X0, y, W, 18);
+    for (let i = 0; i < 40; i++) {
+      const x = X0 + rng() * W, y = Y0 + rng() * H;
+      if (outside(x, y) && (y > WORLD_BOTTOM + 10 || x < -16 || x > LW + 16)) tree(g, x, y, 10 + rng() * 8);
+    }
+    // station concourse
+    g.fillStyle = '#ffe9c9'; rr(g, 6, qTop - 4, 388, V.qH + 2, 14); g.fill();
+    g.strokeStyle = '#e8b97a'; g.lineWidth = 3; g.stroke();
+    // platforms strip
+    g.fillStyle = '#d6cfc4'; g.fillRect(X0, 0, W, BAY_H);
+    g.fillStyle = '#ece6da'; g.fillRect(X0, -3, W, 5);
+    // ballast loop + yard
+    g.fillStyle = '#ab9c84'; rr(g, 2, BAY_H - 2, 396, roadH + 2, 18); g.fill();
+    g.fillStyle = '#c8bba4'; rr(g, LOT.x, LOT.y, LOT.w, LOT.h, 8); g.fill();
+    g.fillStyle = 'rgba(120,100,80,0.18)';
+    for (let i = 0; i < 260; i++) { circ(g, LOT.x + rng() * LOT.w, LOT.y + rng() * LOT.h, 1.2); g.fill(); }
+    for (const ty of (G && G.tracks) || []) railH(g, LOT.x - 14, LOT.x + LOT.w + 14, ty);
+    railH(g, RING.x + 12, RING.x + RING.w - 12, RING.y);
+    railH(g, RING.x + 12, RING.x + RING.w - 12, RING.y + RING.h);
+    railV(g, RING.x, RING.y + 12, RING.y + RING.h - 12);
+    railV(g, RING.x + RING.w, RING.y + 12, RING.y + RING.h - 12);
+    g.strokeStyle = '#5d6270'; g.lineWidth = 1.8;
+    rr(g, RING.x - 4.5, RING.y - 4.5, RING.w + 9, RING.h + 9, 18); g.stroke();
+    rr(g, RING.x + 4.5, RING.y + 4.5, RING.w - 9, RING.h - 9, 10); g.stroke();
+  } else {
+    const gr = g.createLinearGradient(0, Y0, 0, Y0 + H);
+    gr.addColorStop(0, '#140d36'); gr.addColorStop(1, '#2d1b63');
+    g.fillStyle = gr; g.fillRect(X0, Y0, W, H);
+    for (const [nx, ny, nc] of [[X0 + W * 0.15, WORLD_BOTTOM - 60, '255,95,180'], [X0 + W * 0.85, 160, '60,220,255'], [X0 + W * 0.5, WORLD_BOTTOM + 40, '155,93,229']]) {
+      const ng = g.createRadialGradient(nx, ny, 0, nx, ny, 170);
+      ng.addColorStop(0, `rgba(${nc},0.28)`); ng.addColorStop(1, `rgba(${nc},0)`);
+      g.fillStyle = ng; g.fillRect(X0, Y0, W, H);
+    }
+    for (let i = 0; i < 260; i++) {
+      g.fillStyle = `rgba(255,255,255,${0.3 + rng() * 0.7})`;
+      circ(g, X0 + rng() * W, Y0 + rng() * H, 0.4 + rng() * 1.2); g.fill();
+    }
+    if (V.y1 > WORLD_BOTTOM + 30) {
+      const px = LW - 30, py = WORLD_BOTTOM + 46;
+      const pg = g.createRadialGradient(px - 12, py - 12, 4, px, py, 38);
+      pg.addColorStop(0, '#ffd58a'); pg.addColorStop(1, '#ff7a59');
+      g.fillStyle = pg; circ(g, px, py, 36); g.fill();
+      g.strokeStyle = 'rgba(255,230,180,0.8)'; g.lineWidth = 3;
+      g.beginPath(); g.ellipse(px, py, 58, 13, -0.3, 0, TAU); g.stroke();
+    }
+    // star lounge (queue area)
+    g.fillStyle = '#3a2d80'; rr(g, 6, qTop - 4, 388, V.qH + 2, 16); g.fill();
+    g.strokeStyle = '#8f7dff'; g.lineWidth = 3; g.stroke();
+    // docking strip
+    g.fillStyle = '#231a57'; g.fillRect(X0, 0, W, BAY_H);
+    g.fillStyle = '#8f7dff'; g.fillRect(X0, -3, W, 4);
+    // orbit lane + launch field
+    g.fillStyle = '#30266f'; rr(g, 2, BAY_H - 2, 396, roadH + 2, 22); g.fill();
+    g.fillStyle = '#1d1648'; rr(g, LOT.x, LOT.y, LOT.w, LOT.h, 12); g.fill();
+    g.save(); rr(g, LOT.x, LOT.y, LOT.w, LOT.h, 12); g.clip();
+    g.strokeStyle = 'rgba(120,100,255,0.22)'; g.lineWidth = 1;
+    for (let x = LOT.x; x < LOT.x + LOT.w; x += 28) { g.beginPath(); g.moveTo(x, LOT.y); g.lineTo(x, LOT.y + LOT.h); g.stroke(); }
+    for (let y = LOT.y; y < LOT.y + LOT.h; y += 28) { g.beginPath(); g.moveTo(LOT.x, y); g.lineTo(LOT.x + LOT.w, y); g.stroke(); }
+    g.restore();
+    g.setLineDash([2, 8]); g.strokeStyle = '#6ef3ff'; g.lineWidth = 2;
+    rr(g, RING.x, RING.y, RING.w, RING.h, 14); g.stroke(); g.setLineDash([]);
   }
-  drawRopes(g, th);
+  drawQueueArea(g, th);
 }
 
-function drawRopes(g, th) {
-  const { rows, rowH, y, xL, xR } = queueRows;
-  const ropeCol = th === 'boat' ? '#8b5a2b' : th === 'plane' ? '#3d6bff' : '#ff5fa2';
-  const postCol = th === 'boat' ? '#6b3f17' : th === 'plane' ? '#9aa3ba' : '#7b4dff';
-  g.lineCap = 'round';
-  const rope = (x1, yy, x2) => {
-    g.strokeStyle = ropeCol; g.lineWidth = 2.5;
-    g.beginPath(); g.moveTo(x1, yy); g.lineTo(x2, yy); g.stroke();
-    const n = Math.max(1, Math.round((x2 - x1) / 60));
-    for (let k = 0; k <= n; k++) {
-      const x = x1 + (x2 - x1) * k / n;
-      g.fillStyle = postCol; circ(g, x, yy, 3); g.fill();
-      g.fillStyle = 'rgba(255,255,255,0.6)'; circ(g, x - 0.8, yy - 0.8, 1.1); g.fill();
-    }
-  };
-  const yb = y(0) + rowH / 2;
-  rope(xL - 8, yb, 188); rope(212, yb, xR + 8);
-  for (let r = 0; r < rows - 1; r++) {
-    const yy = y(r) - rowH / 2;
-    if (r % 2 === 0) rope(xL + 16, yy, xR + 8); else rope(xL - 8, yy, xR - 16);
+const CAROUSEL = {
+  bus:   { track: '#ff8cc6', edge: '#d94a92', island: '#ffd23f', dots: '#ff5fa2' },
+  boat:  { track: '#c98a4c', edge: '#8a5526', island: '#38c8f4', dots: '#ffffff' },
+  plane: { track: '#5b7cff', edge: '#2a45c9', island: '#eaf0ff', dots: '#9fc2ff' },
+  train: { track: '#ff9f5a', edge: '#c45f1d', island: '#fff0d4', dots: '#ffb27a' },
+  space: { track: '#7c5cff', edge: '#4a33c9', island: '#1d1748', dots: '#ffffff' },
+};
+
+function drawQueueArea(g, th) {
+  const R = ring, C = CAROUSEL[th];
+  rr(g, R.x, R.y + 3, R.w, R.h, R.r); g.lineWidth = 31; g.strokeStyle = 'rgba(0,0,0,0.13)'; g.stroke();
+  rr(g, R.x, R.y, R.w, R.h, R.r);
+  g.lineWidth = 31; g.strokeStyle = C.edge; g.stroke();
+  g.lineWidth = 26; g.strokeStyle = C.track; g.stroke();
+  // centre island with a merry-go-round on top
+  const ix = R.x + 16, iy = R.y + 16, iw = R.w - 32, ih = R.h - 32;
+  if (ih > 6 && iw > 6) {
+    g.fillStyle = C.island; rr(g, ix, iy, iw, ih, ih / 2); g.fill();
+    g.save(); rr(g, ix, iy, iw, ih, ih / 2); g.clip();
+    g.fillStyle = C.dots; g.globalAlpha = 0.35;
+    for (let x = ix + 6; x < ix + iw; x += 12) for (let y = iy + 5; y < iy + ih; y += 10) { circ(g, x + ((y / 10) % 2) * 6, y, 1.8); g.fill(); }
+    g.restore();
+    g.font = `${Math.min(30, ih * 0.66)}px ui-rounded, system-ui, sans-serif`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(th === 'space' ? '🪐' : '🎠', R.x + R.w / 2, R.cy + 1);
   }
-  rope(xL - 8, y(rows - 1) - rowH / 2, xR + 8);
+  // waiting line: a roped-off zig-zag
+  const Lb = lane;
+  const x1 = Lb.xs - 12, x2 = Lb.xe + 12;
+  const yb = Lb.y0 + Lb.rowH / 2 + 1, yt = Lb.y0 - (Lb.rows - 1) * Lb.rowH - Lb.rowH / 2 - 1;
+  g.fillStyle = th === 'space' ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.4)';
+  rr(g, x1, yt, x2 - x1, yb - yt, 12); g.fill();
+  g.lineCap = 'round';
+  const rope = (a, y, b) => {
+    g.strokeStyle = C.edge; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(a, y); g.lineTo(b, y); g.stroke();
+    g.fillStyle = C.edge; circ(g, a, y, 2.6); g.fill(); circ(g, b, y, 2.6); g.fill();
+  };
+  for (let k = 0; k < Lb.rows - 1; k++) {
+    const y = Lb.y0 - k * Lb.rowH - Lb.rowH / 2;
+    if (k % 2 === 0) rope(x1 + 3, y, x2 - 18); else rope(x1 + 18, y, x2 - 3);
+  }
+  g.setLineDash([4, 4]); g.strokeStyle = C.edge; g.lineWidth = 1.5;
+  rr(g, x1, yt, x2 - x1, yb - yt, 12); g.stroke(); g.setLineDash([]);
+}
+
+function drawCarouselFx() {
+  const R = ring, C = CAROUSEL[G.T.key];
+  // direction chevrons drift with the carousel
+  rr(ctx, R.x, R.y, R.w, R.h, R.r);
+  ctx.setLineDash([3, 13]); ctx.lineDashOffset = -G.rot;
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.setLineDash([]); ctx.lineDashOffset = 0;
+  // fairground bulbs round the inner and outer edge
+  const party = G.partyT > 0;
+  const n = Math.round(R.P / 18);
+  for (let k = 0; k < n; k++) {
+    const s = k * R.P / n;
+    const [x, y] = ringPoint(s);
+    const [x2, y2] = ringPoint(s + 1);
+    const nx = -(y2 - y), ny = x2 - x, nl = Math.hypot(nx, ny) || 1;
+    const on = ((k + Math.floor(G.time * (party ? 10 : 3))) % 3) === 0;
+    for (const side of [-15.5, 15.5]) {
+      const bx = x + nx / nl * side, by = y + ny / nl * side;
+      ctx.fillStyle = on ? (party ? RAINBOW[(k + Math.floor(G.time * 8)) % RAINBOW.length] : '#fff7b0') : 'rgba(255,255,255,0.45)';
+      circ(ctx, bx, by, on ? 2.1 : 1.5); ctx.fill();
+    }
+  }
 }
 
 function drawLiveBg() {
@@ -1178,14 +1592,30 @@ function drawLiveBg() {
       ctx.fillStyle = '#d99a5b'; rr(ctx, bx - bw / 2 - 3, 0, 6, 68, 3); ctx.fill();
       ctx.fillStyle = '#8a5526'; circ(ctx, bx - bw / 2, 68, 3.2); ctx.fill();
       if (i === n - 1) { ctx.fillStyle = '#d99a5b'; rr(ctx, bx + bw / 2 - 3, 0, 6, 68, 3); ctx.fill(); ctx.fillStyle = '#8a5526'; circ(ctx, bx + bw / 2, 68, 3.2); ctx.fill(); }
-    } else {
+    } else if (th === 'plane') {
       ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(bx, 14); ctx.lineTo(bx, 84); ctx.stroke();
       ctx.fillStyle = '#d5dbe8'; ctx.strokeStyle = '#8e97ad'; ctx.lineWidth = 1.5;
       rr(ctx, bx - 6, -4, 12, 16, 3); ctx.fill(); ctx.stroke();
+    } else if (th === 'train') {
+      // a platform on each side of every track, buffer stop at the end
+      ctx.fillStyle = '#efe9df'; ctx.fillRect(bx - bw / 2 - 5, 0, 10, 80);
+      ctx.fillStyle = '#ffd23f'; ctx.fillRect(bx - bw / 2 - 5, 0, 1.5, 80); ctx.fillRect(bx - bw / 2 + 3.5, 0, 1.5, 80);
+      if (i === n - 1) { ctx.fillStyle = '#efe9df'; ctx.fillRect(bx + bw / 2 - 5, 0, 10, 80); }
+      ctx.fillStyle = '#7a5a3a';
+      for (let y = 6; y < 84; y += 7) ctx.fillRect(bx - 7, y, 14, 2.5);
+      ctx.fillStyle = '#5d6270'; ctx.fillRect(bx - 5.3, 6, 1.8, 78); ctx.fillRect(bx + 3.5, 6, 1.8, 78);
+      ctx.fillStyle = '#ff4d6d'; rr(ctx, bx - 8, 1, 16, 5, 2); ctx.fill();
+    } else {
+      ctx.save();
+      ctx.setLineDash([6, 5]); ctx.lineDashOffset = -G.time * 12;
+      ctx.strokeStyle = 'rgba(110,243,255,0.55)'; ctx.lineWidth = 2;
+      circ(ctx, bx, BAY_CY, Math.min(30, bw / 2 - 4)); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = '#8f7dff'; rr(ctx, bx - 5, -4, 10, 12, 3); ctx.fill();
     }
     if (empty) {
-      ctx.fillStyle = th === 'plane' ? 'rgba(80,90,120,0.35)' : 'rgba(255,255,255,0.35)';
+      ctx.fillStyle = th === 'plane' || th === 'train' ? 'rgba(80,90,120,0.35)' : 'rgba(255,255,255,0.35)';
       ctx.font = '900 18px ui-rounded, system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(th === 'plane' ? 'G' + (i + 1) : String(i + 1), bx, BAY_CY + 4);
@@ -1211,24 +1641,37 @@ function drawPerson(x, y, c, skin, hair, bob, scale) {
 }
 
 function drawQueue() {
-  const n = Math.min(G.queue.length, queueSlots.length);
-  const dancing = G.partyT > 0;
+  drawCarouselFx();
+  const party = G.partyT > 0;
+  // waiting line (back to front so the front is on top)
+  const n = Math.min(G.waiting.length, queueSlots.length);
   for (let i = n - 1; i >= 0; i--) {
-    const p = G.queue[i];
+    const p = G.waiting[i];
     let bob = p.moving ? Math.sin(p.walk * 18) * 1.2 : 0;
-    if (dancing) bob = Math.sin(G.time * 14 + i * 0.7) * 1.6;
-    if (i === 0) {
-      ctx.fillStyle = 'rgba(255,255,255,0.55)'; circ(ctx, p.x, p.y + 2, 9 + Math.sin(G.time * 6) * 1); ctx.fill();
-    }
-    drawPerson(p.x, p.y, p.c, p.skin, p.hair, bob, i === 0 ? 1.15 : 1);
+    if (party) bob = Math.sin(G.time * 14 + i * 0.7) * 1.6;
+    drawPerson(p.x, p.y, p.c, p.skin, p.hair, bob, 1);
   }
-  const hidden = G.queue.length - n;
+  const hidden = G.waiting.length - n;
   if (hidden > 0) {
     const [x, y] = queueSlots[queueSlots.length - 1];
     ctx.fillStyle = '#ffffff'; rr(ctx, x - 17, y - 10, 34, 20, 10); ctx.fill();
     ctx.fillStyle = '#7b4dff'; ctx.font = '900 11px ui-rounded, system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('+' + hidden, x, y + 0.5);
+  }
+  // carousel riders, drawn top-to-bottom so nearer ones overlap correctly
+  const riders = [];
+  for (let i = 0; i < G.pods.length; i++) {
+    const p = G.pods[i];
+    const [x, y] = podPos(i);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.beginPath(); ctx.ellipse(x, y + 4, 8.5, 4.5, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = CAROUSEL[G.T.key].edge; ctx.lineWidth = 1.2; ctx.stroke();
+    if (p) riders.push(p);
+  }
+  riders.sort((a, b) => a.y - b.y);
+  for (const p of riders) {
+    const bob = p.entering ? Math.sin(p.walk * 18) * 1.2 : Math.sin(G.time * (party ? 14 : 5) + p.walk) * (party ? 1.8 : 0.8);
+    drawPerson(p.x, p.y, p.c, p.skin, p.hair, bob, 1);
   }
 }
 
@@ -1288,26 +1731,97 @@ function planePaths(len, wid) {
 
 function silhouette(v) {
   const k = G.T.key, hl = v.len / 2, hw = v.wid / 2;
-  if (k === 'bus') rr(ctx, -hl, -hw, v.len, v.wid, 7);
+  if (k === 'bus' || k === 'train') rr(ctx, -hl, -hw, v.len, v.wid, 6);
   else if (k === 'boat') hullPath(hl, hw, v.wid * 0.9);
+  else if (k === 'space') rocketBody(hl, hw);
   else {
     const p = planePaths(v.len, v.wid);
     p.wings(); ctx.fill(); p.tail(); ctx.fill(); p.body();
   }
 }
 
+function headBeam(x, half, spread, len) {
+  const beam = ctx.createLinearGradient(x, 0, x + len, 0);
+  beam.addColorStop(0, 'rgba(255,245,160,0.6)'); beam.addColorStop(1, 'rgba(255,245,160,0)');
+  ctx.fillStyle = beam;
+  ctx.beginPath(); ctx.moveTo(x, -half); ctx.lineTo(x + len, -half - spread); ctx.lineTo(x + len, half + spread); ctx.lineTo(x, half); ctx.closePath(); ctx.fill();
+}
+
 function drawBus(v, col) {
   const hl = v.len / 2, hw = v.wid / 2;
-  ctx.fillStyle = col.dark; rr(ctx, -hl, -hw, v.len, v.wid, 7); ctx.fill();
-  ctx.fillStyle = col.main; rr(ctx, -hl + 1, -hw + 1, v.len - 2, v.wid - 3, 6); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.22)'; rr(ctx, -hl + 4, -hw + 3.5, v.len - 15, v.wid - 8, 4); ctx.fill();
-  ctx.fillStyle = '#bfefff'; rr(ctx, hl - 10, -hw + 3, 7, v.wid - 7, 2.5); ctx.fill();
-  ctx.strokeStyle = col.dark; ctx.lineWidth = 1; ctx.stroke();
-  ctx.fillStyle = '#fffbd1'; circ(ctx, hl - 1.6, -hw + 4, 1.7); ctx.fill(); circ(ctx, hl - 1.6, hw - 5, 1.7); ctx.fill();
-  ctx.fillStyle = '#ff3b3b'; ctx.fillRect(-hl, -hw + 3, 1.6, 3.5); ctx.fillRect(-hl, hw - 7.5, 1.6, 3.5);
-  ctx.fillStyle = col.dark; ctx.fillRect(hl - 8, -hw - 2, 3, 2.5); ctx.fillRect(hl - 8, hw - 1.5, 3, 2.5);
-  drawSeats(v, -hl + 6, hl - 12, Math.min(5.6, hw - 5.5), 3.5);
+  // headlight beams make the front (and the way it will drive) obvious
+  for (const sy of [-1, 1]) {
+    const beam = ctx.createLinearGradient(hl, 0, hl + 18, 0);
+    beam.addColorStop(0, 'rgba(255,245,160,0.6)'); beam.addColorStop(1, 'rgba(255,245,160,0)');
+    ctx.fillStyle = beam;
+    ctx.beginPath(); ctx.moveTo(hl - 1, sy * (hw - 3)); ctx.lineTo(hl + 18, sy * (hw + 2)); ctx.lineTo(hl + 18, sy * (hw - 12)); ctx.lineTo(hl - 1, sy * (hw - 7)); ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = col.dark; rr(ctx, -hl, -hw, v.len, v.wid, 6); ctx.fill();
+  ctx.fillStyle = col.main; rr(ctx, -hl + 1, -hw + 1, v.len - 2, v.wid - 3, 5); ctx.fill();
+  // back: engine grille and tail lights
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; rr(ctx, -hl + 1.6, -hw + 5, 2.6, v.wid - 11, 1); ctx.fill();
+  ctx.fillStyle = '#ff3b3b'; ctx.fillRect(-hl, -hw + 1.5, 2, 3.2); ctx.fillRect(-hl, hw - 5, 2, 3.2);
+  // big dark wrap-around windscreen across the front
+  ctx.fillStyle = '#23305e'; rr(ctx, hl - 12, -hw + 1.8, 10, v.wid - 4.6, 3); ctx.fill();
+  ctx.fillStyle = 'rgba(140,210,255,0.85)'; rr(ctx, hl - 10.5, -hw + 3.6, 2.6, v.wid - 8.2, 1.3); ctx.fill();
+  // bumper + headlights
+  ctx.fillStyle = '#f2f2f7'; rr(ctx, hl - 2.4, -hw + 2, 2.6, v.wid - 5, 1.2); ctx.fill();
+  ctx.fillStyle = '#fff36b'; rr(ctx, hl - 2.6, -hw + 2, 2.8, 4, 1); ctx.fill(); rr(ctx, hl - 2.6, hw - 7, 2.8, 4, 1); ctx.fill();
+  // wing mirrors sticking out at the front corners
+  ctx.fillStyle = '#2b2b3a'; ctx.fillRect(hl - 7.5, -hw - 3, 2.4, 4); ctx.fillRect(hl - 7.5, hw - 2, 2.4, 4);
+  drawSeats(v, -hl + 6, hl - 14, Math.min(5.6, hw - 5.5), 3.4);
 }
+
+function drawTrain(v, col) {
+  const hl = v.len / 2, hw = v.wid / 2;
+  const cars = v.cap === 4 ? 2 : v.cap === 6 ? 3 : 4, gap = 2.5;
+  const seg = (v.len - gap * (cars - 1)) / cars;
+  headBeam(hl, 2.5, 6, 22);
+  for (let k = 0; k < cars; k++) {
+    const x0 = -hl + k * (seg + gap), loco = k === cars - 1;
+    if (k < cars - 1) { ctx.fillStyle = '#3d3d4d'; ctx.fillRect(x0 + seg - 1, -1.5, gap + 2, 3); }
+    ctx.fillStyle = col.dark; rr(ctx, x0, -hw, seg, v.wid, loco ? 7 : 3.5); ctx.fill();
+    ctx.fillStyle = col.main; rr(ctx, x0 + 1, -hw + 1, seg - 2, v.wid - 3, loco ? 6 : 3); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.fillRect(x0 + 2.5, -hw + 2, seg - 5, 1.6);
+  }
+  // locomotive cab: dark windscreen, headlamp and a little chimney
+  ctx.fillStyle = '#23305e'; rr(ctx, hl - 9, -hw + 2.5, 4.5, v.wid - 6, 2); ctx.fill();
+  ctx.fillStyle = '#fff36b'; circ(ctx, hl - 1.8, -0.5, 2.1); ctx.fill();
+  ctx.fillStyle = '#2b2b3a'; circ(ctx, hl - 14, -0.5, 2.6); ctx.fill();
+  drawSeats(v, -hl + 3, hl - 18, 3.6, 2.7);
+}
+
+function rocketBody(hl, hw) {
+  const bw = hw * 0.66;
+  ctx.beginPath();
+  ctx.moveTo(-hl + 3, -bw);
+  ctx.lineTo(hl - hw * 1.3, -bw);
+  ctx.quadraticCurveTo(hl - hw * 0.25, -bw * 0.9, hl, 0);
+  ctx.quadraticCurveTo(hl - hw * 0.25, bw * 0.9, hl - hw * 1.3, bw);
+  ctx.lineTo(-hl + 3, bw);
+  ctx.quadraticCurveTo(-hl, bw, -hl, bw - 3);
+  ctx.lineTo(-hl, -bw + 3);
+  ctx.quadraticCurveTo(-hl, -bw, -hl + 3, -bw);
+  ctx.closePath();
+}
+function drawRocket(v, col) {
+  const hl = v.len / 2, hw = v.wid / 2, bw = hw * 0.66;
+  if (v.state === 'moving' || v.state === 'leaving' || v.state === 'emerging') {
+    const f = 8 + Math.sin(G.time * 40) * 2.5 + (v.state === 'leaving' ? 8 : 0);
+    ctx.fillStyle = '#ff7a3d'; ctx.beginPath(); ctx.moveTo(-hl, -bw * 0.65); ctx.lineTo(-hl - f, 0); ctx.lineTo(-hl, bw * 0.65); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff3a0'; ctx.beginPath(); ctx.moveTo(-hl, -bw * 0.35); ctx.lineTo(-hl - f * 0.55, 0); ctx.lineTo(-hl, bw * 0.35); ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = col.dark;
+  for (const sy of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(-hl + 15, sy * bw); ctx.lineTo(-hl + 2, sy * hw); ctx.lineTo(-hl - 1.5, sy * hw); ctx.lineTo(-hl + 1, sy * bw * 0.4); ctx.closePath(); ctx.fill();
+  }
+  rocketBody(hl, hw); ctx.fillStyle = col.main; ctx.fill(); ctx.strokeStyle = col.dark; ctx.lineWidth = 1.3; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.3)'; rr(ctx, -hl + 3, -bw + 1.4, v.len - hw * 1.6, bw * 0.45, 2); ctx.fill();
+  ctx.fillStyle = '#bfefff'; circ(ctx, hl - hw * 1.45, 0, bw * 0.5); ctx.fill();
+  ctx.strokeStyle = col.dark; ctx.lineWidth = 1.2; ctx.stroke();
+  drawSeats(v, -hl + 5, hl - hw * 1.45 - bw * 0.6, bw * 0.42, Math.min(2.6, bw * 0.38));
+}
+
 function drawBoat(v, col) {
   const hl = v.len / 2, hw = v.wid / 2, bow = v.wid * 0.9;
   ctx.fillStyle = '#3d4352'; ctx.fillRect(-hl - 4, -3, 5, 6);
@@ -1347,7 +1861,13 @@ function drawVehicle(v) {
   if (v.state === 'full') sc = 1 + 0.08 * Math.sin((0.3 - v.fullT) * 30);
   if (v.revealT > 0) sc *= 1 + 0.3 * Math.sin((1 - v.revealT / 0.5) * PI);
   if (v.unlockT > 0) sc *= 1 + 0.2 * Math.sin((1 - v.unlockT / 0.5) * PI);
-  if (k === 'plane' && v.state === 'leaving') { sc = 1 + v.fly * 0.8; shOff = 4 + v.fly * 34; }
+  if ((k === 'plane' || k === 'space') && v.state === 'leaving') { sc = 1 + v.fly * 0.8; shOff = 4 + v.fly * 34; }
+  if (v.appearT < 0.4) {
+    if (v.appearT <= 0) return;
+    sc *= easeBack(v.appearT / 0.4);
+  }
+  if (v.parkT > 0) sc *= 1 + 0.07 * Math.sin((1 - v.parkT / 0.35) * PI);
+  if (v.pulse > 0) sc *= 1 + 0.06 * v.pulse;
   const wob = v.wobble > 0 ? Math.sin(G.time * 45) * 0.1 * v.wobble : 0;
 
   ctx.save();
@@ -1364,6 +1884,8 @@ function drawVehicle(v) {
   if (v.revealed && v.color === PARTY) col = partyCol(k === 'plane' ? 0 : v.len / 2, k === 'plane' ? v.wid / 2 : 0);
   if (k === 'bus') drawBus(v, col);
   else if (k === 'boat') drawBoat(v, col);
+  else if (k === 'train') drawTrain(v, col);
+  else if (k === 'space') drawRocket(v, col);
   else drawPlane(v, col);
   if (v.lock > 0) { ctx.fillStyle = 'rgba(40,30,70,0.25)'; silhouette(v); ctx.fill(); }
   ctx.restore();
@@ -1388,6 +1910,82 @@ function drawVehicle(v) {
     ctx.font = '26px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(G.T.lift[0], v.x, v.y - 44 + Math.sin(G.time * 20) * 1.5);
   }
+}
+
+const GARAGE_STYLE = {
+  bus:   { roof: '#ff9f43', dark: '#c4651a', door: '#4a3b5c' },
+  boat:  { roof: '#e7ad6e', dark: '#a8692f', door: '#5a3a1a' },
+  plane: { roof: '#d5dbe8', dark: '#8e97ad', door: '#4a4f63' },
+  train: { roof: '#c46a4a', dark: '#8a4630', door: '#3b2a24' },
+  space: { roof: '#7c5cff', dark: '#4a33c9', door: '#140d36' },
+};
+function drawGarage(g) {
+  const st = GARAGE_STYLE[G.T.key];
+  const hl = g.len / 2, hw = g.wid / 2;
+  const wob = g.wobble > 0 ? Math.sin(G.time * 45) * 0.05 * g.wobble : 0;
+  ctx.save();
+  ctx.translate(g.x, g.y);
+  ctx.save(); ctx.translate(2, 4); ctx.rotate(g.ang); ctx.fillStyle = 'rgba(0,0,0,0.25)'; rr(ctx, -hl, -hw, g.len, g.wid, 6); ctx.fill(); ctx.restore();
+  ctx.rotate(g.ang + wob);
+  ctx.fillStyle = st.dark; rr(ctx, -hl, -hw, g.len, g.wid, 6); ctx.fill();
+  ctx.fillStyle = st.roof; rr(ctx, -hl + 1, -hw + 1, g.len - 2, g.wid - 4, 5); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.13)'; ctx.lineWidth = 1;
+  for (let y = -hw + 5; y < hw - 4; y += 4) { ctx.beginPath(); ctx.moveTo(-hl + 3, y); ctx.lineTo(hl - 8, y); ctx.stroke(); }
+  // roller door on the exit side: it rolls up while a vehicle drives out
+  const open = g.doorT > 0 ? Math.sin(Math.min(1, g.doorT / 0.8) * PI) : 0;
+  ctx.fillStyle = st.door; rr(ctx, hl - 6, -hw + 3, 6, g.wid - 7, 1.5); ctx.fill();
+  if (open < 0.95) {
+    ctx.fillStyle = '#e9e4f5';
+    const dh = (g.wid - 7) * (1 - open);
+    rr(ctx, hl - 5, -hw + 3, 4.5, dh, 1); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    for (let y = -hw + 5; y < -hw + 3 + dh; y += 3) { ctx.beginPath(); ctx.moveTo(hl - 5, y); ctx.lineTo(hl - 0.5, y); ctx.stroke(); }
+  }
+  // arrow: which way they come out
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath(); ctx.moveTo(hl - 9, 0); ctx.lineTo(hl - 16, -5); ctx.lineTo(hl - 16, 5); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  const n = g.queue.length;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (n) {
+    const bx = g.x - Math.cos(g.ang) * 5, by = g.y - Math.sin(g.ang) * 5;
+    ctx.fillStyle = '#ffffff'; circ(ctx, bx, by, 9); ctx.fill();
+    ctx.strokeStyle = st.dark; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#5a2fd6'; ctx.font = '900 12px ui-rounded, system-ui, sans-serif';
+    ctx.fillText(String(n), bx, by + 0.5);
+    const next = g.queue[0];
+    ctx.fillStyle = next.color === PARTY ? rainbowGrad(4, 0) : PAL[next.color].main;
+    circ(ctx, bx + 8, by - 8, 4.5); ctx.fill();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+}
+
+function drawAsteroid(a) {
+  const wob = a.wobble > 0 ? Math.sin(G.time * 45) * 2 * a.wobble : 0;
+  ctx.save();
+  ctx.translate(a.x + wob, a.y);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; circ(ctx, 8, 12, a.r * 0.85); ctx.fill();
+  ctx.rotate(a.rot);
+  ctx.beginPath();
+  a.shape.forEach((k, i) => { const t = i / a.shape.length * TAU; ctx.lineTo(Math.cos(t) * a.r * k, Math.sin(t) * a.r * k); });
+  ctx.closePath();
+  ctx.fillStyle = '#9a8fb0'; ctx.fill();
+  ctx.strokeStyle = '#5c5270'; ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.fillStyle = '#7a6f92';
+  circ(ctx, -a.r * 0.3, -a.r * 0.2, a.r * 0.24); ctx.fill();
+  circ(ctx, a.r * 0.35, a.r * 0.28, a.r * 0.16); ctx.fill();
+  circ(ctx, a.r * 0.1, a.r * 0.45, a.r * 0.1); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.25)'; circ(ctx, -a.r * 0.35, -a.r * 0.4, a.r * 0.18); ctx.fill();
+  ctx.restore();
+}
+
+function drawWalker(w) {
+  const p = w.p;
+  if (!w.D) w.D = Math.max(1, Math.hypot(w.v.x - w.sx, w.v.y - w.sy));
+  const t = clamp(1 - Math.hypot(w.v.x - p.x, w.v.y - p.y) / w.D, 0, 1);
+  const hop = Math.abs(Math.sin(t * PI * 2)) * 6;
+  ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 6, 4.5 - hop * 0.3, 2, 0, 0, TAU); ctx.fill();
+  drawPerson(p.x, p.y - hop, p.c, p.skin, p.hair, 0, 1);
 }
 
 function drawParticles() {
@@ -1442,18 +2040,21 @@ function drawParty() {
   ctx.restore();
 }
 
+let lastHint = null;
 function drawTutorial() {
-  if (!G.tutorial || !G.hint || G.state !== 'play' || G.paused) return;
+  const on = G.tutorial && G.hint && G.state === 'play' && !G.paused;
+  const msg = on ? (G.taps === 0 ? '👆 Tap a vehicle with a clear path!' : '🎨 Match colours on the carousel!') : '';
+  if (msg !== lastHint) {
+    lastHint = msg;
+    const el = $('worldName');
+    el.classList.toggle('hint', !!msg);
+    el.textContent = msg || `${G.T.emoji} World ${G.cfg.world} · ${G.T.world}`;
+  }
+  if (!on) return;
   const v = G.hint;
   const b = Math.sin(G.time * 6) * 5;
   ctx.font = '34px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText('👆', v.x + 8, v.y + 26 + b);
-  const msg = G.taps === 0 ? 'Tap a vehicle with a clear path!' : 'Match the colour at the front!';
-  ctx.font = '900 14px ui-rounded, system-ui, sans-serif';
-  const w = ctx.measureText(msg).width + 24;
-  const y = v.y < LOT.y + 70 ? LOT.y + LOT.h - 22 : LOT.y + 22;
-  ctx.fillStyle = 'rgba(255,255,255,0.95)'; rr(ctx, 200 - w / 2, y - 14, w, 28, 14); ctx.fill();
-  ctx.fillStyle = '#7b4dff'; ctx.fillText(msg, 200, y + 1);
 }
 
 let lastFever = -1, lastPartyState = false;
@@ -1469,14 +2070,17 @@ function render() {
   ctx.setTransform(V.dpr * V.scale, 0, 0, V.dpr * V.scale, V.dpr * (V.ox + sx), V.dpr * (V.oy + sy));
   drawLiveBg();
   drawQueue();
+  for (const v of G.vehicles) if (v.state === 'emerging') drawVehicle(v);
+  for (const g of G.garages) drawGarage(g);
   for (const v of G.vehicles) if (v.state === 'lot' || v.state === 'bump') drawVehicle(v);
+  for (const a of G.asteroids) if (a.active) drawAsteroid(a);
   for (const v of G.vehicles) if (v.state === 'bay' || v.state === 'full') drawVehicle(v);
   for (const v of G.vehicles) if (v.state === 'moving' && !v.lift) drawVehicle(v);
   if (G.liftMode) {
     ctx.fillStyle = 'rgba(255,255,255,' + (0.12 + 0.08 * Math.sin(G.time * 8)) + ')';
     rr(ctx, LOT.x, LOT.y, LOT.w, LOT.h, 10); ctx.fill();
   }
-  for (const w of G.walkers) drawPerson(w.p.x, w.p.y, w.p.c, w.p.skin, w.p.hair, Math.sin(w.p.walk * 20) * 1.4, 1);
+  for (const w of G.walkers) drawWalker(w);
   for (const v of G.vehicles) if (v.state === 'leaving') drawVehicle(v);
   for (const v of G.vehicles) if (v.state === 'moving' && v.lift) drawVehicle(v);
   drawParticles();
@@ -1523,6 +2127,7 @@ function refreshHUD() {
   if (G) {
     $('lvlTitle').textContent = `Level ${G.level}` + (G.cfg.party ? ' 🎉' : '');
     $('worldName').textContent = `${G.T.emoji} World ${G.cfg.world} · ${G.T.world}`;
+    lastHint = null;
     $('liftIcon').textContent = G.T.lift[0];
     $('liftLbl').textContent = G.T.lift[1];
   }
@@ -1569,8 +2174,8 @@ function lose() {
   }
   acts.push({ id: 'retry', label: '↻ Try again', cls: 'pink', fn: () => startLevel(n) });
   acts.push({ id: 'menu', label: 'Menu', cls: 'alt', fn: showMenu });
-  showModal(`<div class="m-emoji">😱</div><h2>Traffic Jam!</h2><p>Every bay is full and nobody at the front can get on.</p>
-    <div class="tip">💡 Look at the colours coming up in the queue before you tap.</div>`, acts);
+  showModal(`<div class="m-emoji">😱</div><h2>Traffic Jam!</h2><p>Every bay is full and nobody on the carousel can get on.</p>
+    <div class="tip">💡 Check which colours are riding the carousel before you tap.</div>`, acts);
 }
 
 function pauseGame() {
@@ -1597,11 +2202,11 @@ function showMenu() {
 function hideMenu() { $('menu').classList.add('hidden'); }
 
 function showLevels() {
-  const worlds = Math.max(3, Math.ceil((save.maxLevel + 1) / 5));
+  const worlds = Math.max(THEME_ORDER.length, Math.ceil((save.maxLevel + 1) / 5));
   let html = '<h2>Levels</h2><div class="lvgrid">';
   for (let w = 0; w < worlds; w++) {
-    const th = THEMES[THEME_ORDER[w % 3]];
-    html += `<div class="lvworld">${th.emoji} World ${w + 1} · ${th.world}${w >= 3 ? ' (Remix)' : ''}</div>`;
+    const th = THEMES[THEME_ORDER[w % THEME_ORDER.length]];
+    html += `<div class="lvworld">${th.emoji} World ${w + 1} · ${th.world}${w >= THEME_ORDER.length ? ' (Remix)' : ''}</div>`;
     for (let k = 1; k <= 5; k++) {
       const n = w * 5 + k, locked = n > save.maxLevel, st = save.stars[n] || 0;
       html += `<button class="lv ${locked ? 'locked' : ''} ${k === 5 ? 'partylv' : ''} ${n === save.maxLevel ? 'current' : ''}" data-lv="${n}" ${locked ? 'disabled' : ''}>${locked ? '🔒' : n}<small>${st ? '⭐'.repeat(st) : (k === 5 && !locked ? '🎉' : '')}</small></button>`;
@@ -1646,18 +2251,31 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden && G && G.state === 'play' && !G.paused && $('modal').classList.contains('hidden')) pauseGame();
 });
 
+// Re-measure whenever the screen, HUD or booster bar actually change size. iOS home-screen
+// apps can report the viewport and safe-area insets late, without a resize event.
 let resizeQueued = false;
-window.addEventListener('resize', () => {
+function scheduleLayout() {
   if (resizeQueued) return;
   resizeQueued = true;
-  requestAnimationFrame(() => { resizeQueued = false; computeLayout(); });
-});
+  setTimeout(() => { resizeQueued = false; computeLayout(); }, 30);
+}
+window.addEventListener('resize', scheduleLayout);
+window.addEventListener('orientationchange', scheduleLayout);
+window.addEventListener('pageshow', scheduleLayout);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleLayout);
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(scheduleLayout);
+  [canvas, $('hud'), $('boosters')].forEach((el) => ro.observe(el));
+}
+[250, 1000, 2500].forEach((ms) => setTimeout(computeLayout, ms));
 
 /* -------------------------------------------------------------- main loop */
 let lastT = performance.now();
+let layoutTick = 0;
 function frame(now) {
   const dt = Math.min(0.05, (now - lastT) / 1000);
   lastT = now;
+  if (++layoutTick % 30 === 0 && layoutKey() !== lastLayoutKey) computeLayout();
   if (G && !G.paused && $('menu').classList.contains('hidden')) update(dt);
   if ($('menu').classList.contains('hidden')) render();
   requestAnimationFrame(frame);
@@ -1674,7 +2292,7 @@ requestAnimationFrame(frame);
 // handy for testing in the console
 window.__lottie = {
   startLevel, levelConfig, generateLevel, getBlockers, handleTap, render, save,
-  get G() { return G; },
+  get G() { return G; }, get view() { return view; },
   step(secs) { for (let t = 0; t < secs; t += 1 / 60) if (G && !G.paused) update(1 / 60); render(); },
 };
 })();

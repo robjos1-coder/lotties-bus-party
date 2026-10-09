@@ -11,7 +11,7 @@ html, body {
 }
 body { position: fixed; inset: 0; }
 button { font-family: inherit; cursor: pointer; touch-action: manipulation; }
-canvas#game { position: fixed; inset: 0; display: block; }
+canvas#game { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; }
 
 /* ---------- HUD ---------- */
 #hud {
@@ -29,6 +29,7 @@ canvas#game { position: fixed; inset: 0; display: block; }
 .hbtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #d3c4ff; }
 .hcenter { flex: 1; text-align: center; min-width: 0; }
 #lvlTitle { font-weight: 900; font-size: 20px; line-height: 1.05; text-shadow: 0 2px 0 rgba(0,0,0,.35), 0 0 8px rgba(0,0,0,.25); }
+#worldName.hint { display: inline-block; background: #fff; color: #7b4dff; border-radius: 999px; padding: 1px 9px; text-shadow: none; animation: pulse .5s ease-in-out infinite alternate; }
 #worldName { font-size: 12px; font-weight: 800; text-shadow: 0 1px 0 rgba(0,0,0,.4); opacity: .95; white-space: nowrap; }
 #fever {
   position: relative; height: 15px; border-radius: 9px; margin: 4px auto 0; max-width: 190px;
@@ -56,13 +57,13 @@ canvas#game { position: fixed; inset: 0; display: block; }
 /* ---------- Boosters ---------- */
 #boosters {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
-  padding: 8px 12px calc(env(safe-area-inset-bottom) + 10px);
+  padding: 6px 12px calc(env(safe-area-inset-bottom) + 8px);
   display: flex; justify-content: center; gap: 14px;
   pointer-events: none;
 }
 .boost {
   pointer-events: auto;
-  position: relative; width: 88px; height: 62px; border: none; border-radius: 18px;
+  position: relative; width: 84px; height: 56px; border: none; border-radius: 17px;
   background: linear-gradient(#ffffff, #efe7ff);
   box-shadow: 0 5px 0 #bfa9ff, 0 8px 16px rgba(0,0,0,.28);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -70,7 +71,7 @@ canvas#game { position: fixed; inset: 0; display: block; }
 }
 .boost:active { transform: translateY(3px); box-shadow: 0 2px 0 #bfa9ff; }
 .boost.active { background: linear-gradient(#fff07a, #ffc83c); box-shadow: 0 5px 0 #e09b00, 0 0 0 4px #fff, 0 8px 18px rgba(0,0,0,.3); animation: pulse .5s ease-in-out infinite alternate; }
-.bi { font-size: 25px; line-height: 1; }
+.bi { font-size: 22px; line-height: 1; }
 .bl { font-size: 11px; margin-top: 4px; white-space: nowrap; }
 .badge {
   position: absolute; top: -7px; right: -7px; min-width: 24px; height: 24px; padding: 0 6px;
@@ -167,10 +168,12 @@ canvas#game { position: fixed; inset: 0; display: block; }
 .logo-main span:nth-child(8n+6) { color: #ffb3e0; animation-delay: .40s; }
 .logo-main span:nth-child(8n+7) { color: #5bf08a; animation-delay: .48s; }
 .logo-main span:nth-child(8n+8) { color: #7fe8ff; animation-delay: .56s; }
-.logo-vehicles { font-size: 44px; margin-top: 10px; }
-.logo-vehicles span { display: inline-block; margin: 0 6px; animation: drive 2s ease-in-out infinite; }
+.logo-vehicles { font-size: 36px; margin-top: 10px; }
+.logo-vehicles span { display: inline-block; margin: 0 4px; animation: drive 2s ease-in-out infinite; }
 .logo-vehicles span:nth-child(2) { animation-delay: .3s; }
 .logo-vehicles span:nth-child(3) { animation-delay: .6s; }
+.logo-vehicles span:nth-child(4) { animation-delay: .9s; }
+.logo-vehicles span:nth-child(5) { animation-delay: 1.2s; }
 .btn.big { font-size: 30px; padding: 16px; border-radius: 24px; }
 .row { display: flex; gap: 12px; }
 .row .btn { font-size: 17px; }
