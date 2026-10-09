@@ -9,7 +9,7 @@ A bright, tap-to-play traffic-jam puzzle for your phone, in the style of Bus Fev
 - Vehicles drive round to the bays at the top.
 - Passengers walk round the **holding circle** and leave through the gap at the bottom to board vehicles of **their colour**. Two feeder lines top the circle up, so you can see which colours are coming next.
 - Full vehicles drive off, sail away, take off down the runway or blast into space!
-- If every bay fills up with colours nobody on the carousel wants, it's a **Traffic Jam**.
+- If every bay fills up with colours nobody in the circle wants, it's a **Traffic Jam**.
 
 ## Worlds
 | Levels | World | Twist |
